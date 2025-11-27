@@ -3,3 +3,6 @@ builder = "NIXPACKS"
 
 [start]
 cmd = "npm start"
+
+[variables]
+PORT = "3000"
