@@ -88,7 +88,7 @@ app.post('/voice', (req, res) => {
       voice: 'alice',
       language: 'en-AU',
     },
-    'Hi, this is the handyman desk. How can we help you today?'
+    'Hi, this is Baris`s phone. How can we help you today?'
   );
 
   res.type('text/xml');
@@ -118,7 +118,7 @@ app.post('/gather', async (req, res) => {
 
     retry.say(
       { voice: 'alice', language: 'en-AU' },
-      'Sorry mate, didn’t catch that. What do you need help with?'
+      'Apologize, didn’t catch that. What do you need help with?'
     );
 
     res.type('text/xml');
@@ -160,7 +160,7 @@ app.post('/gather', async (req, res) => {
 
     twiml.say(
       { voice: 'alice', language: 'en-AU' },
-      'Sorry mate, something went wrong on our end. Please try again shortly.'
+      'Apologize, something went wrong on our end. Please try again shortly.'
     );
 
     res.type('text/xml');
