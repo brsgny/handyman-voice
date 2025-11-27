@@ -41,19 +41,25 @@ app.post("/gather", async (req, res) => {
 
   console.log("User said:", userSpeech);
 
-  // Call OpenAI
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
         role: "system",
-        content:
-          "You are a warm, friendly Aussie receptionist. Speak slowly, clearly, and use a calm tone. Keep replies under two short sentences. Ask only one question at a time."
+        content: `
+You are a warm, calm Aussie receptionist for a handyman service.
+Speak slowly, naturally and conversationally — like a real person on the phone.
+Use 1–2 short sentences, with occasional pauses (use '...' to pace your speech).
+DO NOT repeat yourself.
+DO NOT ask "How else can I help you?" every time.
+Only ask a follow-up question when needed to progress the conversation.
+If the caller sounds done, say something like:
+"Is there anything else you'd like a hand with today?"
+If they say no, finish politely.
+Keep the tone relaxed, friendly and helpful.
+        `
       },
-      {
-        role: "user",
-        content: userSpeech || "The caller did not say anything."
-      }
+      { role: "user", content: userSpeech }
     ]
   });
 
@@ -61,27 +67,32 @@ app.post("/gather", async (req, res) => {
 
   const twiml = new twilio.twiml.VoiceResponse();
 
-  // Say AI response
+  // Say the AI reply
   twiml.say({ voice: "alice", language: "en-AU" }, aiReply);
 
-  // Continue the conversation without going back to greeting
-  const nextGather = twiml.gather({
-    input: "speech",
-    action: "/gather",
-    method: "POST",
-    language: "en-AU",
-    speechTimeout: 2,
-    timeout: 10
-  });
+  // Decide whether to gather again
+  if (!/bye|thanks|thank you|no that’s all|that's all/i.test(userSpeech)) {
+    const next = twiml.gather({
+      input: "speech",
+      action: "/gather",
+      method: "POST",
+      language: "en-AU",
+      speechTimeout: 2,
+      timeout: 8   // shorter pause feels more natural
+    });
 
-  nextGather.say(
-    { voice: "alice", language: "en-AU" },
-    "How else can I help you?"
-  );
+    // Light, soft follow-up BEHIND THE SCENES (not repeating the question)
+    next.say(
+      { voice: "alice", language: "en-AU" },
+      ""
+    );
+  } else {
+    twiml.say(
+      { voice: "alice", language: "en-AU" },
+      "Thanks for calling. Have a lovely day."
+    );
+  }
 
   res.type("text/xml");
   res.send(twiml.toString());
 });
-
-app.listen(3000, () => console.log("Server running on port 3000"));
-
