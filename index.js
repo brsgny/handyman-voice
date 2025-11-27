@@ -79,8 +79,8 @@ app.post('/voice', (req, res) => {
     input: 'speech',
     action: '/gather',
     method: 'POST',
-    timeout: 5,
     language: 'en-AU',
+    timeout: 5,
   });
 
   gather.say(
@@ -88,10 +88,11 @@ app.post('/voice', (req, res) => {
       voice: 'alice',
       language: 'en-AU',
     },
-    'Hi mate, you’ve reached the handyman desk. What can I help you with today?'
+    'Hi, this is the handyman desk. How can we help you today?'
   );
 
-  // Important: do NOT add a fallback <Say> outside the gather.
+  // ❗ IMPORTANT: no fallback say here
+  // ❗ Do NOT add anything after gather
 
   res.type('text/xml');
   res.send(twiml.toString());
