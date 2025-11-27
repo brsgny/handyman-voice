@@ -132,14 +132,32 @@ app.post("/gather", async (req, res) => {
     const b = session.booking;
 
     switch (session.stage) {
-      case "ask_name":
-        b.name = userSpeechRaw.trim();
-        session.stage = "ask_job";
-        reply =
-          "Nice to meet you " +
-          b.name +
-          ". What do you need a hand with today?";
-        break;
+     case "ask_name":
+    {
+      // Clean name input
+      let name = userSpeechRaw
+        .replace(/my name is/i, "")
+        .replace(/i am/i, "")
+        .replace(/i'm/i, "")
+        .replace(/this is/i, "")
+        .replace(/it's/i, "")
+        .replace(/its/i, "")
+        .replace(/the name is/i, "")
+        .trim();
+
+      // Take only first word as first name
+      name = name.split(" ")[0];
+
+      // Capitalise properly
+      name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+
+      b.name = name;
+      session.stage = "ask_job";
+
+      reply = "Nice to meet you, " + name + ". What do you need a hand with today?";
+    }
+    break;
+
 
       case "ask_job":
         b.job = userSpeechRaw.trim();
