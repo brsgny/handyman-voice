@@ -3,49 +3,67 @@ import twilio from "twilio";
 import bodyParser from "body-parser";
 import OpenAI from "openai";
 
+console.log("📌 Starting server file…");
+
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
+// Railway PORT fix
+const PORT = process.env.PORT || 3000;
+
+// Debug variables
+console.log("TWILIO SID:", process.env.TWILIO_SID ? "OK" : "MISSING");
+console.log("OPENAI KEY:", process.env.OPENAI_API_KEY ? "OK" : "MISSING");
+
+// OpenAI client
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Health check
 app.get("/", (req, res) => {
   res.send("Handyman AI Voice server is running.");
 });
 
-// FIRST GREETING (only once)
-app.post("/voice", async (req, res) => {
-  const twiml = new twilio.twiml.VoiceResponse();
+// FIRST GREETING
+app.post("/voice", (req, res) => {
+  try {
+    console.log("📞 /voice endpoint hit");
 
-  const gather = twiml.gather({
-    input: "speech",
-    action: "/gather",
-    method: "POST",
-    language: "en-AU",
-    speechTimeout: 2,  // waits after caller stops speaking
-    timeout: 10        // caller has 10 seconds to start talking
-  });
+    const twiml = new twilio.twiml.VoiceResponse();
 
-  gather.say(
-    { voice: "alice", language: "en-AU" },
-    "Hi, this is Barish`s phone. How can I help you today?"
-  );
+    const gather = twiml.gather({
+      input: "speech",
+      action: "/gather",
+      method: "POST",
+      language: "en-AU",
+      speechTimeout: 2,
+      timeout: 10
+    });
 
-  res.type("text/xml");
-  res.send(twiml.toString());
+    gather.say(
+      { voice: "alice", language: "en-AU" },
+      "Hi, this is the handyman desk. How can I help you today?"
+    );
+
+    res.type("text/xml");
+    res.send(twiml.toString());
+  } catch (err) {
+    console.error("❌ Error in /voice:", err);
+    res.send("<Response><Say>Sorry, something went wrong.</Say></Response>");
+  }
 });
 
-// MAIN CONVERSATION LOOP
+// MAIN LOOP
 app.post("/gather", async (req, res) => {
-  const userSpeech = req.body.SpeechResult || "";
+  try {
+    const userSpeech = req.body.SpeechResult || "";
+    console.log("🗣 User said:", userSpeech);
 
-  console.log("User said:", userSpeech);
-
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
         content: `
 You are a warm, calm Aussie receptionist for a handyman service.
 Speak slowly, naturally and conversationally — like a real person on the phone.
@@ -65,34 +83,38 @@ Keep the tone relaxed, friendly and helpful.
 
   const aiReply = completion.choices[0].message.content;
 
-  const twiml = new twilio.twiml.VoiceResponse();
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say({ voice: "alice", language: "en-AU" }, aiReply);
 
-  // Say the AI reply
-  twiml.say({ voice: "alice", language: "en-AU" }, aiReply);
+    // End call detection
+    if (/bye|thanks|that’s all|no more/i.test(userSpeech)) {
+      twiml.say(
+        { voice: "alice", language: "en-AU" },
+        "Thanks for calling. Have a lovely day."
+      );
+    } else {
+      const gather = twiml.gather({
+        input: "speech",
+        action: "/gather",
+        method: "POST",
+        language: "en-AU",
+        speechTimeout: 2,
+        timeout: 8
+      });
 
-  // Decide whether to gather again
-  if (!/bye|thanks|thank you|no that’s all|that's all/i.test(userSpeech)) {
-    const next = twiml.gather({
-      input: "speech",
-      action: "/gather",
-      method: "POST",
-      language: "en-AU",
-      speechTimeout: 2,
-      timeout: 8   // shorter pause feels more natural
-    });
+      gather.say({ voice: "alice", language: "en-AU" }, "");
+    }
 
-    // Light, soft follow-up BEHIND THE SCENES (not repeating the question)
-    next.say(
-      { voice: "alice", language: "en-AU" },
-      ""
-    );
-  } else {
-    twiml.say(
-      { voice: "alice", language: "en-AU" },
-      "Thanks for calling. Have a lovely day."
-    );
+    res.type("text/xml");
+    res.send(twiml.toString());
+  } catch (err) {
+    console.error("❌ Error in /gather:", err);
+    res.type("text/xml");
+    res.send("<Response><Say>Sorry, I'm having trouble right now.</Say></Response>");
   }
-
-  res.type("text/xml");
-  res.send(twiml.toString());
 });
+
+// START SERVER
+app.listen(PORT, () =>
+  console.log(`🚀 Server running on port ${PORT}`)
+);
