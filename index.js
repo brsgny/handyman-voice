@@ -63,8 +63,8 @@ app.post("/gather", async (req, res) => {
       messages: [
         {
           role: "system",
-          content:
-        content: `
+          
+          content: `
 You are a warm, calm Aussie receptionist for a handyman service.
 Speak slowly, naturally and conversationally — like a real person on the phone.
 Use 1–2 short sentences, with occasional pauses (use '...' to pace your speech).
