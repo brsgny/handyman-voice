@@ -18,6 +18,9 @@ console.log("OPENAI KEY:", process.env.OPENAI_API_KEY ? "OK" : "MISSING");
 // OpenAI client
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Memory for repeating last message
+let lastReply = "";
+
 // Health check
 app.get("/", (req, res) => {
   res.send("Handyman AI Voice server is running.");
@@ -41,7 +44,7 @@ app.post("/voice", (req, res) => {
 
     gather.say(
       { voice: "alice", language: "en-AU" },
-      "Hi, this is the handyman desk. How can I help you today?"
+      "Hi, this is Barish’s phone number. How can I help you today?"
     );
 
     res.type("text/xml");
@@ -55,44 +58,81 @@ app.post("/voice", (req, res) => {
 // MAIN LOOP
 app.post("/gather", async (req, res) => {
   try {
-    const userSpeech = req.body.SpeechResult || "";
-    console.log("🗣 User said:", userSpeech);
+    const userSpeechRaw = req.body.SpeechResult || "";
+    const userSpeech = userSpeechRaw.toLowerCase();
+    console.log("🗣 User said:", userSpeechRaw);
 
+    const twiml = new twilio.twiml.VoiceResponse();
+
+    // ----------------------------------------------------
+    // REPEAT HANDLING (caller didn't understand)
+    // ----------------------------------------------------
+    if (
+      userSpeech.includes("repeat") ||
+      userSpeech.includes("say again") ||
+      userSpeech.includes("pardon") ||
+      userSpeech.includes("sorry") ||
+      userSpeech.includes("didn't catch") ||
+      userSpeech.includes("didnt catch") ||
+      userSpeech.includes("what")
+    ) {
+      const toRepeat = lastReply || "Let me say that again.";
+      twiml.say(
+        { voice: "alice", language: "en-AU" },
+        "Sure, no worries… " + toRepeat
+      );
+
+      const gather = twiml.gather({
+        input: "speech",
+        action: "/gather",
+        method: "POST",
+        language: "en-AU",
+        speechTimeout: 2,
+        timeout: 8
+      });
+
+      gather.say({ voice: "alice", language: "en-AU" }, "");
+      res.type("text/xml");
+      return res.send(twiml.toString());
+    }
+
+    // ----------------------------------------------------
+    // NORMAL OPENAI RESPONSE
+    // ----------------------------------------------------
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          
-          content: `
-You are a warm, calm Aussie receptionist for a handyman service.
-Speak slowly, naturally and conversationally — like a real person on the phone.
-Use 1–2 short sentences, with occasional pauses (use '...' to pace your speech).
-DO NOT repeat yourself.
-DO NOT ask "How else can I help you?" every time.
-Only ask a follow-up question when needed to progress the conversation.
-If the caller sounds done, say something like:
-"Is there anything else you'd like a hand with today?"
-If they say no, finish politely.
-Keep the tone relaxed, friendly and helpful.
-        `
-      },
-      { role: "user", content: userSpeech }
-    ]
-  });
+          content:
+            "You are a warm, calm Aussie receptionist for a handyman service. Speak slowly, clearly, and conversationally. Use short, simple sentences. Avoid sounding robotic. If caller is confused, gently repeat or explain again. Do NOT say 'what would you like me to repeat'. Keep replies friendly, helpful, and natural."
+        },
+        { role: "user", content: userSpeechRaw }
+      ]
+    });
 
-  const aiReply = completion.choices[0].message.content;
+    const aiReply = completion.choices[0].message.content.trim();
+    lastReply = aiReply; // save for repeating
 
-    const twiml = new twilio.twiml.VoiceResponse();
+    // Speak reply
     twiml.say({ voice: "alice", language: "en-AU" }, aiReply);
 
-    // End call detection
-    if (/bye|thanks|that’s all|no more/i.test(userSpeech)) {
+    // ----------------------------------------------------
+    // END CALL DETECTION
+    // ----------------------------------------------------
+    if (
+      userSpeech.includes("bye") ||
+      userSpeech.includes("thanks") ||
+      userSpeech.includes("that’s all") ||
+      userSpeech.includes("that's all") ||
+      userSpeech.includes("no more")
+    ) {
       twiml.say(
         { voice: "alice", language: "en-AU" },
         "Thanks for calling. Have a lovely day."
       );
     } else {
+      // Continue conversation
       const gather = twiml.gather({
         input: "speech",
         action: "/gather",
