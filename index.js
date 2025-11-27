@@ -132,40 +132,33 @@ app.post("/gather", async (req, res) => {
     const b = session.booking;
 
     switch (session.stage) {
-     case "ask_name":
-    {
-      // Clean name input
-      let name = userSpeechRaw
-        .replace(/my name is/i, "")
-        .replace(/i am/i, "")
-        .replace(/i'm/i, "")
-        .replace(/this is/i, "")
-        .replace(/it's/i, "")
-        .replace(/its/i, "")
-        .replace(/the name is/i, "")
-        .trim();
 
-      // Take only first word as first name
-      name = name.split(" ")[0];
+      case "ask_name": {
+        let name = userSpeechRaw
+          .replace(/my name is/i, "")
+          .replace(/i am/i, "")
+          .replace(/i'm/i, "")
+          .replace(/this is/i, "")
+          .replace(/it's/i, "")
+          .replace(/its/i, "")
+          .replace(/the name is/i, "")
+          .trim();
 
-      // Capitalise properly
-      name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+        name = name.split(" ")[0];
+        name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 
-      b.name = name;
-      session.stage = "ask_job";
+        b.name = name;
+        session.stage = "ask_job";
 
-      reply = "Nice to meet you, " + name + ". What do you need a hand with today?";
-    }
-    break;
-
+        reply =
+          "Nice to meet you, " + name + ". What do you need a hand with today?";
+        break;
+      }
 
       case "ask_job":
         b.job = userSpeechRaw.trim();
         session.stage = "ask_suburb";
-        reply =
-          "Got it, " +
-          b.job +
-          ". Which suburb are you in?";
+        reply = "Got it, " + b.job + ". Which suburb are you in?";
         break;
 
       case "ask_suburb":
@@ -189,13 +182,23 @@ app.post("/gather", async (req, res) => {
         break;
 
       case "confirm":
+        console.log("🟦 Confirmation stage — user said:", userSpeechRaw);
+
         if (
           userSpeech.includes("yes") ||
+          userSpeech.includes("yeah") ||
+          userSpeech.includes("yep") ||
+          userSpeech.includes("sure") ||
           userSpeech.includes("correct") ||
+          userSpeech.includes("right") ||
           userSpeech.includes("that's right") ||
-          userSpeech.includes("thats right") ||
-          userSpeech.includes("right")
+          userSpeech.includes("that’s right") ||
+          userSpeech.includes("sounds good") ||
+          userSpeech.includes("okay") ||
+          userSpeech.includes("ok") ||
+          userSpeech.includes("yup")
         ) {
+          console.log("✅ Confirmation accepted — preparing SMS...");
           session.stage = "completed";
 
           reply =
@@ -203,68 +206,77 @@ app.post("/gather", async (req, res) => {
             (b.name || "mate") +
             ". I’ll send you a text with the booking details and the team will be in touch shortly. Thanks for calling.";
 
-          // Send SMS summaries (fire and forget)
           const customerBody =
             "Thanks for calling Barish’s Handyman Desk.\n" +
             "Booking details:\n" +
-            "Name: " + (b.name || "") + "\n" +
-            "Job: " + (b.job || "") + "\n" +
-            "Suburb: " + (b.suburb || "") + "\n" +
-            "Preferred time: " + (b.time || "") + "\n" +
+            "Name: " + b.name + "\n" +
+            "Job: " + b.job + "\n" +
+            "Suburb: " + b.suburb + "\n" +
+            "Preferred time: " + b.time + "\n" +
             "We’ll be in touch shortly.";
 
           const ownerBody =
             "New handyman enquiry:\n" +
-            "From: " + (b.name || "Unknown") + " (" + b.phone + ")\n" +
-            "Job: " + (b.job || "") + "\n" +
-            "Suburb: " + (b.suburb || "") + "\n" +
-            "Preferred time: " + (b.time || "") + "\n";
+            "From: " + b.name + " (" + b.phone + ")\n" +
+            "Job: " + b.job + "\n" +
+            "Suburb: " + b.suburb + "\n" +
+            "Preferred time: " + b.time + "\n";
 
           try {
-            // SMS to customer
+            // CUSTOMER SMS
+            console.log("📤 Attempting SMS to customer:", from);
+
             if (from !== "unknown") {
               client.messages
                 .create({
-                  from: "+61468067099", // your Twilio number
+                  from: "+61468067099",
                   to: from,
                   body: customerBody
                 })
-                .then(m => console.log("📩 Sent SMS to customer:", m.sid))
-                .catch(e => console.error("❌ Error SMS to customer:", e));
+                .then((m) =>
+                  console.log("✅ SMS sent to customer:", m.sid)
+                )
+                .catch((e) =>
+                  console.error("❌ Error SMS to customer:", e.message)
+                );
             }
 
-            // SMS to you
+            // OWNER SMS
+            console.log(
+              "📤 Attempting SMS to owner: +61404983231"
+            );
+
             client.messages
               .create({
                 from: "+61468067099",
-                to: "+61404983231", // your private mobile
+                to: "+61404983231",
                 body: ownerBody
               })
-              .then(m => console.log("📩 Sent SMS to owner:", m.sid))
-              .catch(e => console.error("❌ Error SMS to owner:", e));
+              .then((m) =>
+                console.log("✅ SMS sent to owner:", m.sid)
+              )
+              .catch((e) =>
+                console.error("❌ Error SMS to owner:", e.message)
+              );
           } catch (smsErr) {
             console.error("❌ SMS sending error:", smsErr);
           }
         } else if (userSpeech.includes("no")) {
-          // If they say no, restart from job description
-          session.stage = "ask_job";
           reply =
             "No worries, let’s try that again. What do you need help with?";
+          session.stage = "ask_job";
         } else {
-          // unclear answer at confirm stage
           reply =
             "Sorry, I just want to double check. Is that booking correct?";
         }
         break;
 
       case "completed":
-        // After completion, be polite and let them go / answer quick questions
         reply =
           "Thanks again for calling Barish’s handyman line. Is there anything else you need today?";
         break;
 
       default:
-        // fallback – light OpenAI answer if something weird happens
         const completion = await openai.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [
@@ -280,11 +292,11 @@ app.post("/gather", async (req, res) => {
         break;
     }
 
-    // Speak reply
+    // SPEAK REPLY
     session.lastReply = reply;
     twiml.say({ voice: "alice", language: "en-AU" }, reply);
 
-    // Decide whether to continue or end
+    // END OR CONTINUE
     if (session.stage === "completed") {
       twiml.say(
         { voice: "alice", language: "en-AU" },
@@ -300,13 +312,12 @@ app.post("/gather", async (req, res) => {
         speechTimeout: 2,
         timeout: 10
       });
-
-      // small prompt to keep the line open, but not pushy
       gather.say({ voice: "alice", language: "en-AU" }, "");
     }
 
     res.type("text/xml");
     res.send(twiml.toString());
+
   } catch (err) {
     console.error("❌ Error in /gather:", err);
     res.type("text/xml");
