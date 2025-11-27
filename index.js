@@ -91,9 +91,6 @@ app.post('/voice', (req, res) => {
     'Hi, this is the handyman desk. How can we help you today?'
   );
 
-  // ❗ IMPORTANT: no fallback say here
-  // ❗ Do NOT add anything after gather
-
   res.type('text/xml');
   res.send(twiml.toString());
 });
