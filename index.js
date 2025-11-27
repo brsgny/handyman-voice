@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 
 const express = require('express');
@@ -12,8 +11,7 @@ const port = process.env.PORT || 3000;
 // Twilio sends x-www-form-urlencoded
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// In-memory conversation store per call.
-// For production you might use Redis or a DB instead.
+// Memory store for each call
 const callMemory = new Map();
 
 const openai = new OpenAI({
@@ -21,28 +19,22 @@ const openai = new OpenAI({
 });
 
 /**
- * Build / update conversation history for this CallSid
+ * Build AI conversation history for this call
  */
 function buildMessages(callSid, userText) {
   const systemPrompt = `
 You are an AI phone receptionist for a handyman business in Australia.
 
 Your role:
-- Answer the phone in a friendly, professional, down‑to‑earth Aussie style.
-- Quickly find out:
-  * What the job is (e.g. painting, door repair, flat pack install, TV mounting, leaking tap, etc.)
-  * Where the job is (suburb and rough address)
-  * When the customer would like it done (give a couple of time window options)
-- Ask follow–up questions only if needed.
-- Give realistic price ranges, not exact quotes. Use rough wording like:
-  "Most jobs like this land between 150 and 350 dollars, depending on details."
-- Keep sentences short and clear – this will be converted to text‑to‑speech.
-- At the end, summarise the booking details and ask:
-  "Is that all correct?"
-- If the caller seems finished, say goodbye politely and let them hang up.
-
-Never mention that you are an AI or language model unless the caller explicitly asks.
-  `.trim();
+- Answer in a friendly Aussie tone.
+- Ask what job they need done (painting, leaking tap, door repair, TV mounting, etc).
+- Ask where the job is (suburb + rough address).
+- Ask when they want it done; offer simple time options.
+- Give rough price ranges only ("jobs like this usually land between 150 and 350 dollars").
+- Keep responses short and clear.
+- Summarise all details near the end and confirm accuracy.
+- If caller is finished, say goodbye politely.
+`;
 
   let history = callMemory.get(callSid);
   if (!history) {
@@ -58,7 +50,7 @@ Never mention that you are an AI or language model unless the caller explicitly 
 }
 
 /**
- * Call OpenAI to generate the assistant reply
+ * Ask OpenAI for a response
  */
 async function getAssistantReply(messages) {
   const response = await openai.chat.completions.create({
@@ -69,7 +61,7 @@ async function getAssistantReply(messages) {
 
   let content = response.choices[0].message.content;
 
-  // Newer SDKs may return content as an array of blocks
+  // SDK variations
   if (Array.isArray(content)) {
     content = content.map(part => part.text || '').join(' ');
   }
@@ -78,77 +70,57 @@ async function getAssistantReply(messages) {
 }
 
 /**
- * Entry webhook: when a call first comes in
+ * FIRST Webhook: /voice — when the call starts
  */
 app.post('/voice', (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
-  twiml.gather({
+  const gather = twiml.gather({
     input: 'speech',
     action: '/gather',
     method: 'POST',
-    language: 'en-AU',
     timeout: 5,
-  }).say(
+    language: 'en-AU',
+  });
+
+  gather.say(
     {
       voice: 'alice',
       language: 'en-AU',
     },
-    'Hi, this is the handyman desk. How can we help you today?'
+    'Hi mate, you’ve reached the handyman desk. What can I help you with today?'
   );
 
-  // Fallback if no speech captured
-  twiml.say(
-    {
-      voice: 'alice',
-      language: 'en-AU',
-    },
-    'Sorry, I did not catch that. Please call again later. Bye for now.'
-  );
+  // Important: do NOT add a fallback <Say> outside the gather.
 
   res.type('text/xml');
   res.send(twiml.toString());
 });
 
 /**
- * Second webhook: Twilio sends us what the caller said
+ * SECOND Webhook: /gather — user has spoken
  */
 app.post('/gather', async (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
 
   const callSid = req.body.CallSid;
   const speechResult = req.body.SpeechResult || '';
-  const fromNumber = req.body.From;
-  const toNumber = req.body.To;
 
-  console.log('Incoming speech:', {
-    callSid,
-    fromNumber,
-    toNumber,
-    speechResult,
-  });
+  console.log("User said:", speechResult);
 
   if (!speechResult.trim()) {
-    twiml.say(
-      {
-        voice: 'alice',
-        language: 'en-AU',
-      },
-      'Sorry, I did not catch anything there.'
-    );
-    twiml.pause({ length: 1 });
-    twiml.gather({
+    // Ask again politely
+    const retry = twiml.gather({
       input: 'speech',
       action: '/gather',
       method: 'POST',
-      language: 'en-AU',
       timeout: 5,
-    }).say(
-      {
-        voice: 'alice',
-        language: 'en-AU',
-      },
-      'Please tell me what you need help with.'
+      language: 'en-AU',
+    });
+
+    retry.say(
+      { voice: 'alice', language: 'en-AU' },
+      'Sorry mate, didn’t catch that. What do you need help with?'
     );
 
     res.type('text/xml');
@@ -156,59 +128,58 @@ app.post('/gather', async (req, res) => {
   }
 
   try {
-    // Build messages and call OpenAI
+    // Build conversation and get AI reply
     const messages = buildMessages(callSid, speechResult);
     const assistantReply = await getAssistantReply(messages);
 
-    // Save assistant message into history
     messages.push({ role: 'assistant', content: assistantReply });
     callMemory.set(callSid, messages);
 
-    // Read the AI reply back to the caller
+    // Speak AI reply
     twiml.say(
-      {
-        voice: 'alice',
-        language: 'en-AU',
-      },
+      { voice: 'alice', language: 'en-AU' },
       assistantReply
     );
 
     // Ask if they need anything else
-    twiml.pause({ length: 0.5 });
-    twiml.gather({
+    const gatherMore = twiml.gather({
       input: 'speech',
       action: '/gather',
       method: 'POST',
-      language: 'en-AU',
       timeout: 6,
-    }).say(
-      {
-        voice: 'alice',
-        language: 'en-AU',
-      },
-      'If you need anything else, just say it after the beep. Otherwise, you can hang up now.'
+      language: 'en-AU',
+    });
+
+    gatherMore.say(
+      { voice: 'alice', language: 'en-AU' },
+      'If you need anything else, just tell me. Otherwise you can hang up.'
     );
 
     res.type('text/xml');
     res.send(twiml.toString());
   } catch (err) {
-    console.error('Error calling OpenAI:', err);
+    console.error("OpenAI error:", err);
+
     twiml.say(
-      {
-        voice: 'alice',
-        language: 'en-AU',
-      },
-      'Sorry, there was a technical problem on our side. Please try again later.'
+      { voice: 'alice', language: 'en-AU' },
+      'Sorry mate, something went wrong on our end. Please try again shortly.'
     );
+
     res.type('text/xml');
     res.send(twiml.toString());
   }
 });
 
+/**
+ * Sanity Check Root Route
+ */
 app.get('/', (_req, res) => {
   res.send('Handyman AI Voice server is running.');
 });
 
-app.listen(port, () => {
+/**
+ * Start server
+ */
+app.listen(port, "0.0.0.0", () => {
   console.log(`Handyman Voice AI server listening on port ${port}`);
 });
