@@ -24,26 +24,17 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const sessions = {}; // { "+6146...": { stage, booking, lastReply } }
 
 // ------------------------------------------------------------
-// 🧹 SPEECH CLEANING FUNCTION (Removes mmmm, nnn, uhh, etc.)
+// 🧹 SPEECH CLEANING FUNCTION
 // ------------------------------------------------------------
 function cleanSpeech(input) {
   if (!input) return "";
 
   let text = input.toLowerCase();
 
-  // Remove long repeated characters
   text = text.replace(/([a-z])\1{2,}/gi, "");
-
-  // Remove hesitation/filler words
   text = text.replace(/\b(um+|uh+|erm+|hmm+|huh+|ah+|mmm+)\b/gi, "");
-
-  // Remove isolated noise syllables
   text = text.replace(/\b(m+|n+|a+)\b/gi, "");
-
-  // Remove double-letter noises inside sentences
   text = text.replace(/\b([a-z])\1{1,}\b/gi, "");
-
-  // Remove extra spaces
   text = text.replace(/\s+/g, " ").trim();
 
   return text;
@@ -57,27 +48,84 @@ function extractSuburb(input) {
 
   let text = input.toLowerCase().trim();
 
-  // Remove leading phrases
   text = text.replace(
     /\b(i'm|i am|im|in|at|from|my suburb is|suburb is|it's|its|the suburb is|i live in|live in)\b/gi,
     ""
   ).trim();
 
-  // Remove filler
   text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
-
-  // Remove repeated letters (crraaigieburn -> craigieburn)
   text = text.replace(/([a-z])\1{2,}/gi, "$1");
-
-  // Clean remaining noise syllables
   text = text.replace(/\b(m+|n+|a+)\b/gi, "").trim();
 
-  // Capitalize each word
   return text
     .split(" ")
     .filter(w => w.length > 0)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
+}
+
+// ------------------------------------------------------------
+// ⏰ TIME AUTO DETECTION
+// ------------------------------------------------------------
+function extractTime(input) {
+  if (!input) return "";
+
+  let text = input.toLowerCase().trim();
+
+  // Remove filler
+  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "");
+
+  // Common relative days
+  const relativeDays = {
+    "today": "today",
+    "tomorrow": "tomorrow",
+    "the day after tomorrow": "day after tomorrow",
+    "next week": "next week",
+    "this week": "this week",
+    "this weekend": "this weekend",
+  };
+
+  for (let key in relativeDays) {
+    if (text.includes(key)) return key;
+  }
+
+  // Detect weekdays
+  const weekdays = [
+    "monday","tuesday","wednesday","thursday","friday","saturday","sunday"
+  ];
+
+  for (let day of weekdays) {
+    if (text.includes(day)) {
+
+      // Extract time (3, 3pm, 3:30, etc.)
+      const timeMatch = text.match(/(\d{1,2})(:\d{2})?\s?(am|pm)?/);
+      if (timeMatch) {
+        return `${day} at ${timeMatch[0]}`;
+      }
+
+      return day;
+    }
+  }
+
+  // Parts of day
+  if (text.includes("morning")) return "morning";
+  if (text.includes("afternoon")) return "afternoon";
+  if (text.includes("evening")) return "evening";
+  if (text.includes("tonight")) return "tonight";
+  if (text.includes("lunch")) return "around lunch";
+
+  // Detect date like 12, 12th, 23rd
+  const dateMatch = text.match(/\b(\d{1,2})(st|nd|rd|th)?\b/);
+  if (dateMatch) return dateMatch[0];
+
+  // Detect numeric time like 3pm, 9 am, 7:30, 1130
+  const timeMatch =
+    text.match(/(\d{1,2})(:\d{2})?\s?(am|pm)?/) ||
+    text.match(/\b(\d{3,4})\b/);
+
+  if (timeMatch) return timeMatch[0];
+
+  return text;
 }
 
 // ------------------------------------------------------------
@@ -241,9 +289,22 @@ app.post("/gather", async (req, res) => {
         break;
       }
 
-      case "ask_time":
-        b.time = cleaned.trim();
+      // ------------------------------------------------------------
+      // ⏰ NEW TIME EXTRACTION BLOCK
+      // ------------------------------------------------------------
+      case "ask_time": {
+        const timeValue = extractTime(cleaned);
+
+        console.log("⏰ Extracted time:", timeValue);
+
+        if (!timeValue || timeValue.length < 2) {
+          reply = "Sorry, when would you like us to come out?";
+          break;
+        }
+
+        b.time = timeValue;
         session.stage = "confirm";
+
         reply =
           "Beautiful. So I’ve got " +
           b.job +
@@ -253,7 +314,11 @@ app.post("/gather", async (req, res) => {
           b.time +
           ". Is that right?";
         break;
+      }
 
+      // ------------------------------------------------------------
+      // CONFIRMATION
+      // ------------------------------------------------------------
       case "confirm":
         console.log("🟦 Confirmation stage — user said:", cleaned);
 
@@ -278,7 +343,6 @@ app.post("/gather", async (req, res) => {
             (b.name || "mate") +
             ". I’ll send you a text with the booking details and the team will be in touch shortly. Thanks for calling.";
 
-          // Prepare SMS text
           const customerBody =
             "Thanks for calling Barish’s Handyman Desk.\n" +
             "Booking details:\n" +
@@ -306,10 +370,8 @@ app.post("/gather", async (req, res) => {
                   to: from,
                   body: customerBody
                 })
-                .then((m) => console.log("✅ SMS sent to customer:", m.sid))
-                .catch((e) =>
-                  console.error("❌ Error SMS to customer:", e.message)
-                );
+                .then(m => console.log("✅ SMS sent to customer:", m.sid))
+                .catch(e => console.error("❌ Error SMS to customer:", e.message));
             }
 
             // OWNER SMS
@@ -321,10 +383,8 @@ app.post("/gather", async (req, res) => {
                 to: "+61404983231",
                 body: ownerBody
               })
-              .then((m) => console.log("✅ SMS sent to owner:", m.sid))
-              .catch((e) =>
-                console.error("❌ Error SMS to owner:", e.message)
-              );
+              .then(m => console.log("✅ SMS sent to owner:", m.sid))
+              .catch(e => console.error("❌ Error SMS to owner:", e.message));
           } catch (smsErr) {
             console.error("❌ SMS sending error:", smsErr);
           }
@@ -338,8 +398,7 @@ app.post("/gather", async (req, res) => {
         break;
 
       case "completed":
-        reply =
-          "Thanks again for calling Barish’s handyman line. Is there anything else you need today?";
+        reply = "Thanks again for calling Barish’s handyman line. Is there anything else you need today?";
         break;
 
       default:
@@ -375,9 +434,7 @@ app.post("/gather", async (req, res) => {
   } catch (err) {
     console.error("❌ Error in /gather:", err);
     res.type("text/xml");
-    res.send(
-      "<Response><Say>Sorry, I'm having trouble right now.</Say></Response>"
-    );
+    res.send("<Response><Say>Sorry, I'm having trouble right now.</Say></Response>");
   }
 });
 
