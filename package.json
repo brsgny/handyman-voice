@@ -1,7 +1,7 @@
 {
   "name": "handyman-voice-ai",
   "version": "1.0.0",
-  "description": "Twilio voice AI receptionist for handyman business using OpenAI.",
+  "description": "AI voice receptionist for handyman using Twilio + OpenAI.",
   "main": "index.js",
   "type": "module",
   "scripts": {
