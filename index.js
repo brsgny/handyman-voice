@@ -50,6 +50,43 @@ function cleanSpeech(input) {
 }
 
 // ------------------------------------------------------------
+// 🧍‍♂️ **STRONG NAME EXTRACTION (NEW)**
+// ------------------------------------------------------------
+function extractName(text) {
+  if (!text) return "";
+
+  let t = text.toLowerCase().trim();
+
+  // Remove greetings
+  t = t.replace(/\b(hi|hello|hey|good morning|good afternoon|good evening)\b/gi, "");
+
+  // Remove filler noises
+  t = t.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "");
+
+  // Remove repeated letters ("bbaaariiss" → "baris")
+  t = t.replace(/([a-z])\1{2,}/gi, "$1");
+
+  // Remove introduction phrases
+  t = t.replace(
+    /\b(my name is|i am|i'm|this is|its|it's|the name is|me|speaking)\b/gi,
+    ""
+  );
+
+  t = t.trim();
+
+  // First word should be the name
+  let first = t.split(" ")[0];
+
+  // Keep only letters
+  first = first.replace(/[^a-z]/gi, "");
+
+  if (!first || first.length < 2) return "";
+
+  // Capitalise
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+}
+
+// ------------------------------------------------------------
 // 🗺️ SUBURB AUTO DETECTION
 // ------------------------------------------------------------
 function extractSuburb(input) {
@@ -57,7 +94,6 @@ function extractSuburb(input) {
 
   let text = input.toLowerCase().trim();
 
-  // Remove leading phrases
   text = text
     .replace(
       /\b(i'm|i am|im|in|at|from|my suburb is|suburb is|it's|its|the suburb is|i live in|live in)\b/gi,
@@ -65,16 +101,12 @@ function extractSuburb(input) {
     )
     .trim();
 
-  // Remove filler
   text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
 
-  // Remove repeated letters (crraaigieburn -> craigieburn)
   text = text.replace(/([a-z])\1{2,}/gi, "$1");
 
-  // Clean remaining noise syllables
   text = text.replace(/\b(m+|n+|a+)\b/gi, "").trim();
 
-  // Capitalize each word
   return text
     .split(" ")
     .filter((w) => w.length > 0)
@@ -83,7 +115,7 @@ function extractSuburb(input) {
 }
 
 // ------------------------------------------------------------
-// ⏰ DATE/TIME HELPERS
+// TIME + DATE FUNCTIONS (unchanged)
 // ------------------------------------------------------------
 function addDays(date, days) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -104,9 +136,7 @@ function formatTimeDisplay(hour, minute, ampm) {
     return n < 10 ? "0" + n : "" + n;
   }
 
-  if (!ampm) {
-    return hour + ":" + pad(minute);
-  }
+  if (!ampm) return hour + ":" + pad(minute);
 
   const ampmLower = ampm.toLowerCase();
   let h24 = hour;
@@ -118,14 +148,11 @@ function formatTimeDisplay(hour, minute, ampm) {
 }
 
 // ------------------------------------------------------------
-// ⏰ TIME + DATE AUTO DETECTION
-// ------------------------------------------------------------
 function extractTime(input) {
   if (!input) return "";
 
   let text = input.toLowerCase().trim();
 
-  // Remove filler
   text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
 
   const now = new Date();
@@ -133,143 +160,99 @@ function extractTime(input) {
   let partOfDay = "";
   let timeString = "";
 
-  // Parts of day
   if (text.includes("morning")) partOfDay = "morning";
   else if (text.includes("afternoon")) partOfDay = "afternoon";
   else if (text.includes("evening")) partOfDay = "evening";
   else if (text.includes("tonight")) partOfDay = "tonight";
   else if (text.includes("lunch")) partOfDay = "around lunch";
 
-  // Relative days
-  if (text.includes("day after tomorrow")) {
-    baseDate = addDays(now, 2);
-  } else if (text.includes("tomorrow")) {
-    baseDate = addDays(now, 1);
-  } else if (text.includes("today")) {
-    baseDate = addDays(now, 0);
-  }
+  if (text.includes("day after tomorrow")) baseDate = addDays(now, 2);
+  else if (text.includes("tomorrow")) baseDate = addDays(now, 1);
+  else if (text.includes("today")) baseDate = now;
 
   const weekdays = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday"
+    "sunday","monday","tuesday","wednesday","thursday","friday","saturday"
   ];
+
   const todayIndex = now.getDay();
 
-  // Weekdays with "next ..."
   if (!baseDate) {
-    for (let i = 0; i < weekdays.length; i++) {
-      const day = weekdays[i];
-      if (text.includes("next " + day)) {
+    for (let i = 0; i < 7; i++) {
+      if (text.includes("next " + weekdays[i])) {
         let diff = (i - todayIndex + 7) % 7;
         if (diff === 0) diff = 7;
-        baseDate = addDays(now, diff + 7); // skip to next week
+        baseDate = addDays(now, diff + 7);
         break;
       }
     }
   }
 
-  // Plain weekdays
   if (!baseDate) {
-    for (let i = 0; i < weekdays.length; i++) {
-      const day = weekdays[i];
-      if (text.includes(day)) {
+    for (let i = 0; i < 7; i++) {
+      if (text.includes(weekdays[i])) {
         let diff = (i - todayIndex + 7) % 7;
-        if (diff === 0) diff = 7; // interpret as upcoming, not today
+        if (diff === 0) diff = 7;
         baseDate = addDays(now, diff);
         break;
       }
     }
   }
 
-  // Numeric day of month (12, 12th, 23rd, etc.)
-  if (!baseDate) {
-    const dateMatch = text.match(/\b(\d{1,2})(st|nd|rd|th)?\b/);
-    if (dateMatch) {
-      let dayNum = parseInt(dateMatch[1], 10);
-      let month = now.getMonth();
-      let year = now.getFullYear();
-      let candidate = new Date(year, month, dayNum);
-
-      if (candidate < now) {
-        month += 1;
-        if (month > 11) {
-          month = 0;
-          year += 1;
-        }
-        candidate = new Date(year, month, dayNum);
+  const dateMatch = text.match(/\b(\d{1,2})(st|nd|rd|th)?\b/);
+  if (!baseDate && dateMatch) {
+    let dayNum = parseInt(dateMatch[1]);
+    let month = now.getMonth();
+    let year = now.getFullYear();
+    let candidate = new Date(year, month, dayNum);
+    if (candidate < now) {
+      month++;
+      if (month > 11) {
+        month = 0;
+        year++;
       }
-      baseDate = candidate;
+      candidate = new Date(year, month, dayNum);
     }
+    baseDate = candidate;
   }
 
-  // Time of day: 3pm, 3 pm, 7:30, 1130, etc.
-  let timeMatch =
+  const timeMatch =
     text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/) ||
     text.match(/\b(\d{3,4})\b/);
 
   if (timeMatch) {
     let hour = parseInt(timeMatch[1], 10);
-    let minute = 0;
-    let ampm = null;
+    let minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    let ampm = timeMatch[3] || null;
 
-    if (timeMatch[2]) {
-      minute = parseInt(timeMatch[2].replace(":", ""), 10);
-    }
-
-    if (timeMatch[3]) {
-      ampm = timeMatch[3];
-    }
-
-    // If they say "evening" and no am/pm, assume pm, same for morning
     if (!ampm) {
       if (partOfDay === "evening") ampm = "pm";
       else if (partOfDay === "morning") ampm = "am";
     }
 
-    // If they gave 3 or 4 digit time like "1530"
     if (!timeMatch[3] && timeMatch[0].length === 4 && !timeMatch[2]) {
       const str = timeMatch[0];
-      hour = parseInt(str.slice(0, 2), 10);
-      minute = parseInt(str.slice(2), 10);
+      hour = parseInt(str.slice(0, 2));
+      minute = parseInt(str.slice(2));
     }
 
     timeString = formatTimeDisplay(hour, minute, ampm);
   }
 
-  // If we have a base date AND a time
-  if (baseDate && timeString) {
+  if (baseDate && timeString)
     return formatDateAU(baseDate) + " at " + timeString;
-  }
 
-  // If we have a base date and just part of day
-  if (baseDate && partOfDay) {
+  if (baseDate && partOfDay)
     return formatDateAU(baseDate) + " " + partOfDay;
-  }
 
-  // If we only have a base date
-  if (baseDate) {
-    return formatDateAU(baseDate);
-  }
+  if (baseDate) return formatDateAU(baseDate);
 
-  // If we only have time or part of day
-  if (timeString && partOfDay) {
+  if (timeString && partOfDay)
     return timeString + " (" + partOfDay + ")";
-  }
 
-  if (timeString) {
-    return "at " + timeString;
-  }
+  if (timeString) return "at " + timeString;
 
-  if (partOfDay) {
-    return partOfDay;
-  }
+  if (partOfDay) return partOfDay;
 
-  // Fallback: return cleaned text
   return text;
 }
 
@@ -309,8 +292,6 @@ app.post("/voice", (req, res) => {
     const session = getSession(from);
     session.stage = "ask_name";
 
-    console.log("📞 /voice endpoint hit from", from);
-
     const twiml = new twilio.twiml.VoiceResponse();
     const gather = twiml.gather({
       input: "speech",
@@ -346,9 +327,6 @@ app.post("/gather", async (req, res) => {
     const cleaned = cleanSpeech(userSpeechRaw);
     const userSpeech = cleaned.toLowerCase();
 
-    console.log("🗣 Raw speech:", userSpeechRaw);
-    console.log("✨ Cleaned speech:", cleaned);
-
     const twiml = new twilio.twiml.VoiceResponse();
 
     // --------------------------------------------------------
@@ -357,8 +335,7 @@ app.post("/gather", async (req, res) => {
     if (
       userSpeech.includes("repeat") ||
       userSpeech.includes("say again") ||
-      userSpeech.includes("could you say that again") ||
-      userSpeech.includes("can you say that again") ||
+      userSpeech.includes("sorry") ||
       userSpeech.includes("pardon") ||
       userSpeech.includes("didn't catch") ||
       userSpeech.includes("didnt catch")
@@ -392,61 +369,51 @@ app.post("/gather", async (req, res) => {
     const b = session.booking;
 
     switch (session.stage) {
+      // -------------------------
+      // FIXED NAME HANDLING
+      // -------------------------
       case "ask_name": {
-        let name = cleaned
-          .replace(/my name is/i, "")
-          .replace(/i am/i, "")
-          .replace(/i'm/i, "")
-          .replace(/this is/i, "")
-          .replace(/it's/i, "")
-          .replace(/its/i, "")
-          .replace(/the name is/i, "")
-          .trim();
+        const name = extractName(cleaned);
 
-        name = name.split(" ")[0];
-        name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+        console.log("🟩 Extracted name:", name);
+
+        if (!name || name.length < 2) {
+          reply = "Sorry, I didn't catch your name. Could you say just your first name?";
+          break;
+        }
 
         b.name = name;
         session.stage = "ask_job";
 
-        reply =
-          "Nice to meet you, " +
-          name +
-          ". What do you need a hand with today?";
+        reply = `Nice to meet you, ${name}. What do you need a hand with today?`;
         break;
       }
 
       case "ask_job":
         b.job = cleaned.trim();
         session.stage = "ask_suburb";
-        reply = "Got it, " + b.job + ". Which suburb are you in?";
+        reply = "Got it. Which suburb are you in?";
         break;
 
       case "ask_suburb": {
         const suburb = extractSuburb(cleaned);
 
-        console.log("📍 Suburb extracted:", suburb);
-
         if (!suburb || suburb.length < 2) {
-          reply =
-            "Sorry, I didn't quite catch the suburb. What suburb are you in?";
+          reply = "Sorry, what suburb are you in?";
           break;
         }
 
         b.suburb = suburb;
         session.stage = "ask_time";
 
-        reply =
-          "Thanks. When would you like us to come out? For example, tomorrow afternoon or next Tuesday morning.";
+        reply = "Thanks. When would you like us to come out?";
         break;
       }
 
       case "ask_time": {
         const timeValue = extractTime(cleaned);
 
-        console.log("⏰ Extracted time:", timeValue);
-
-        if (!timeValue || timeValue.length < 2) {
+        if (!timeValue) {
           reply = "Sorry, when would you like us to come out?";
           break;
         }
@@ -454,127 +421,66 @@ app.post("/gather", async (req, res) => {
         b.time = timeValue;
         session.stage = "confirm";
 
-        reply =
-          "Beautiful. So I’ve got " +
-          b.job +
-          " in " +
-          b.suburb +
-          " at " +
-          b.time +
-          ". Is that right?";
+        reply = `Beautiful. So I’ve got ${b.job} in ${b.suburb} at ${b.time}. Is that right?`;
         break;
       }
 
-      case "confirm":
-        console.log("🟦 Confirmation stage — user said:", cleaned);
-
+      case "confirm": {
         if (
           userSpeech.includes("yes") ||
           userSpeech.includes("yeah") ||
           userSpeech.includes("yep") ||
           userSpeech.includes("sure") ||
-          userSpeech.includes("correct") ||
-          userSpeech.includes("right") ||
-          userSpeech.includes("that's right") ||
-          userSpeech.includes("sounds good") ||
-          userSpeech.includes("okay") ||
-          userSpeech.includes("ok") ||
-          userSpeech.includes("yup")
+          userSpeech.includes("correct")
         ) {
-          console.log("✅ Confirmation accepted — preparing SMS...");
           session.stage = "completed";
 
           reply =
-            "Perfect, " +
-            (b.name || "mate") +
-            ". I’ll send you a text with the booking details and the team will be in touch shortly. Thanks for calling.";
+            `Perfect, ${b.name}. I'll send you a text with your booking details now. Thanks for calling.`;
 
           const customerBody =
-            "Thanks for calling Barish’s Handyman Desk.\n" +
-            "Booking details:\n" +
-            "Name: " +
-            b.name +
-            "\n" +
-            "Job: " +
-            b.job +
-            "\n" +
-            "Suburb: " +
-            b.suburb +
-            "\n" +
-            "Preferred time: " +
-            b.time +
-            "\n" +
-            "We’ll be in touch shortly.";
+            `Thanks for calling Barish’s Handyman Desk.
+Booking details:
+Name: ${b.name}
+Job: ${b.job}
+Suburb: ${b.suburb}
+Preferred time: ${b.time}
+We’ll be in touch shortly.`;
 
           const ownerBody =
-            "New handyman enquiry:\n" +
-            "From: " +
-            b.name +
-            " (" +
-            b.phone +
-            ")\n" +
-            "Job: " +
-            b.job +
-            "\n" +
-            "Suburb: " +
-            b.suburb +
-            "\n" +
-            "Preferred time: " +
-            b.time +
-            "\n";
+            `New handyman enquiry:
+From: ${b.name} (${b.phone})
+Job: ${b.job}
+Suburb: ${b.suburb}
+Preferred time: ${b.time}`;
 
           try {
-            // CUSTOMER SMS
-            console.log("📤 Attempting SMS to customer:", from);
-
+            // SMS to customer
             if (from !== "unknown") {
-              client.messages
-                .create({
-                  from: "+61468067099",
-                  to: from,
-                  body: customerBody
-                })
-                .then((m) =>
-                  console.log("✅ SMS sent to customer:", m.sid)
-                )
-                .catch((e) =>
-                  console.error(
-                    "❌ Error SMS to customer:",
-                    e.message
-                  )
-                );
+              client.messages.create({
+                from: "+61468067099",
+                to: from,
+                body: customerBody
+              });
             }
 
-            // OWNER SMS
-            console.log("📤 Attempting SMS to owner: +61404983231");
-
-            client.messages
-              .create({
-                from: "+61468067099",
-                to: "+61404983231",
-                body: ownerBody
-              })
-              .then((m) =>
-                console.log("✅ SMS sent to owner:", m.sid)
-              )
-              .catch((e) =>
-                console.error(
-                  "❌ Error SMS to owner:",
-                  e.message
-                )
-              );
-          } catch (smsErr) {
-            console.error("❌ SMS sending error:", smsErr);
+            // SMS to owner
+            client.messages.create({
+              from: "+61468067099",
+              to: "+61404983231",
+              body: ownerBody
+            });
+          } catch (err) {
+            console.error("❌ SMS error:", err.message);
           }
         } else if (userSpeech.includes("no")) {
-          reply =
-            "No worries, let’s try that again. What do you need help with?";
           session.stage = "ask_job";
+          reply = "No worries, what do you need help with?";
         } else {
-          reply =
-            "Sorry, I just want to double check. Is that booking correct?";
+          reply = "Sorry, is that booking correct?";
         }
         break;
+      }
 
       case "completed":
         reply =
@@ -582,8 +488,7 @@ app.post("/gather", async (req, res) => {
         break;
 
       default:
-        reply =
-          "Sorry, I didn’t quite get that. Could you say it again?";
+        reply = "Sorry, I didn’t catch that. Could you say it again?";
     }
 
     // SPEAK reply
@@ -614,9 +519,7 @@ app.post("/gather", async (req, res) => {
   } catch (err) {
     console.error("❌ Error in /gather:", err);
     res.type("text/xml");
-    res.send(
-      "<Response><Say>Sorry, I'm having trouble right now.</Say></Response>"
-    );
+    res.send("<Response><Say>Sorry, I'm having trouble right now.</Say></Response>");
   }
 });
 
