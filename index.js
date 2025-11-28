@@ -1,628 +1,261 @@
-import express from "express";
-import twilio from "twilio";
-import bodyParser from "body-parser";
-import OpenAI from "openai";
+// realtime-server.js
+// ⚠️ Advanced Twilio <-> OpenAI Realtime bridge skeleton
+// Keep your existing index.js booking bot separate until this is tested.
 
-console.log("📌 Starting server file…");
+import express from "express";
+import http from "http";
+import twilio from "twilio";
+import WebSocket, { WebSocketServer } from "ws";
+import bodyParser from "body-parser";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 
-// Railway PORT
 const PORT = process.env.PORT || 3000;
 
-// Debug variables
 console.log("TWILIO SID:", process.env.TWILIO_SID ? "OK" : "MISSING");
 console.log("TWILIO AUTH:", process.env.TWILIO_AUTH ? "OK" : "MISSING");
 console.log("OPENAI KEY:", process.env.OPENAI_API_KEY ? "OK" : "MISSING");
 
-// Twilio + OpenAI clients
 const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// In-memory sessions (per caller)
-const sessions = {}; // { "+6146...": { stage, booking, lastReply } }
-
-// ------------------------------------------------------------
-// 🧹 SPEECH CLEANING FUNCTION
-// ------------------------------------------------------------
-function cleanSpeech(input) {
-  if (!input) return "";
-
-  let text = input.toLowerCase();
-
-  // Remove long repeated characters
-  text = text.replace(/([a-z])\1{2,}/gi, "");
-
-  // Remove hesitation/filler words
-  text = text.replace(/\b(um+|uh+|erm+|hmm+|huh+|ah+|mmm+)\b/gi, "");
-
-  // Remove isolated noise syllables
-  text = text.replace(/\b(m+|n+|a+)\b/gi, "");
-
-  // Remove double-letter noises inside sentences
-  text = text.replace(/\b([a-z])\1{1,}\b/gi, "");
-
-  // Remove extra spaces
-  text = text.replace(/\s+/g, " ").trim();
-
-  return text;
-}
-
-// ------------------------------------------------------------
-// 🗺️ SUBURB AUTO DETECTION
-// ------------------------------------------------------------
-function extractSuburb(input) {
-  if (!input) return "";
-
-  let text = input.toLowerCase().trim();
-
-  // Remove leading phrases
-  text = text
-    .replace(
-      /\b(i'm|i am|im|in|at|from|my suburb is|suburb is|it's|its|the suburb is|i live in|live in)\b/gi,
-      ""
-    )
-    .trim();
-
-  // Remove filler
-  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
-
-  // Remove repeated letters (crraaigieburn -> craigieburn)
-  text = text.replace(/([a-z])\1{2,}/gi, "$1");
-
-  // Clean remaining noise syllables
-  text = text.replace(/\b(m+|n+|a+)\b/gi, "").trim();
-
-  // Capitalize each word
-  return text
-    .split(" ")
-    .filter((w) => w.length > 0)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
-// ------------------------------------------------------------
-// ⏰ DATE/TIME HELPERS
-// ------------------------------------------------------------
-function addDays(date, days) {
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  d.setDate(d.getDate() + days);
-  return d;
-}
-
-function formatDateAU(date) {
-  return date.toLocaleDateString("en-AU", {
-    weekday: "long",
-    day: "numeric",
-    month: "long"
-  });
-}
-
-function formatTimeDisplay(hour, minute, ampm) {
-  function pad(n) {
-    return n < 10 ? "0" + n : "" + n;
-  }
-
-  if (!ampm) {
-    return hour + ":" + pad(minute);
-  }
-
-  const ampmLower = ampm.toLowerCase();
-  let h24 = hour;
-  if (ampmLower === "pm" && hour < 12) h24 = hour + 12;
-  if (ampmLower === "am" && hour === 12) h24 = 0;
-
-  const displayHour = ((h24 + 11) % 12) + 1;
-  return displayHour + ":" + pad(minute) + " " + ampmLower;
-}
-
-// ------------------------------------------------------------
-// ⏰ TIME + DATE AUTO DETECTION
-// ------------------------------------------------------------
-function extractTime(input) {
-  if (!input) return "";
-
-  let text = input.toLowerCase().trim();
-
-  // Remove filler
-  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
-
-  const now = new Date();
-  let baseDate = null;
-  let partOfDay = "";
-  let timeString = "";
-
-  // Parts of day
-  if (text.includes("morning")) partOfDay = "morning";
-  else if (text.includes("afternoon")) partOfDay = "afternoon";
-  else if (text.includes("evening")) partOfDay = "evening";
-  else if (text.includes("tonight")) partOfDay = "tonight";
-  else if (text.includes("lunch")) partOfDay = "around lunch";
-
-  // Relative days
-  if (text.includes("day after tomorrow")) {
-    baseDate = addDays(now, 2);
-  } else if (text.includes("tomorrow")) {
-    baseDate = addDays(now, 1);
-  } else if (text.includes("today")) {
-    baseDate = addDays(now, 0);
-  }
-
-  const weekdays = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday"
-  ];
-  const todayIndex = now.getDay();
-
-  // Weekdays with "next ..."
-  if (!baseDate) {
-    for (let i = 0; i < weekdays.length; i++) {
-      const day = weekdays[i];
-      if (text.includes("next " + day)) {
-        let diff = (i - todayIndex + 7) % 7;
-        if (diff === 0) diff = 7;
-        baseDate = addDays(now, diff + 7); // skip to next week
-        break;
-      }
-    }
-  }
-
-  // Plain weekdays
-  if (!baseDate) {
-    for (let i = 0; i < weekdays.length; i++) {
-      const day = weekdays[i];
-      if (text.includes(day)) {
-        let diff = (i - todayIndex + 7) % 7;
-        if (diff === 0) diff = 7; // interpret as upcoming, not today
-        baseDate = addDays(now, diff);
-        break;
-      }
-    }
-  }
-
-  // Numeric day of month (12, 12th, 23rd, etc.)
-  if (!baseDate) {
-    const dateMatch = text.match(/\b(\d{1,2})(st|nd|rd|th)?\b/);
-    if (dateMatch) {
-      let dayNum = parseInt(dateMatch[1], 10);
-      let month = now.getMonth();
-      let year = now.getFullYear();
-      let candidate = new Date(year, month, dayNum);
-
-      if (candidate < now) {
-        month += 1;
-        if (month > 11) {
-          month = 0;
-          year += 1;
-        }
-        candidate = new Date(year, month, dayNum);
-      }
-      baseDate = candidate;
-    }
-  }
-
-  // Time of day: 3pm, 3 pm, 7:30, 1130, etc.
-  let timeMatch =
-    text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/) ||
-    text.match(/\b(\d{3,4})\b/);
-
-  if (timeMatch) {
-    let hour = parseInt(timeMatch[1], 10);
-    let minute = 0;
-    let ampm = null;
-
-    if (timeMatch[2]) {
-      minute = parseInt(timeMatch[2].replace(":", ""), 10);
-    }
-
-    if (timeMatch[3]) {
-      ampm = timeMatch[3];
-    }
-
-    // If they say "evening" and no am/pm, assume pm, same for morning
-    if (!ampm) {
-      if (partOfDay === "evening") ampm = "pm";
-      else if (partOfDay === "morning") ampm = "am";
-    }
-
-    // If they gave 3 or 4 digit time like "1530"
-    if (!timeMatch[3] && timeMatch[0].length === 4 && !timeMatch[2]) {
-      const str = timeMatch[0];
-      hour = parseInt(str.slice(0, 2), 10);
-      minute = parseInt(str.slice(2), 10);
-    }
-
-    timeString = formatTimeDisplay(hour, minute, ampm);
-  }
-
-  // If we have a base date AND a time
-  if (baseDate && timeString) {
-    return formatDateAU(baseDate) + " at " + timeString;
-  }
-
-  // If we have a base date and just part of day
-  if (baseDate && partOfDay) {
-    return formatDateAU(baseDate) + " " + partOfDay;
-  }
-
-  // If we only have a base date
-  if (baseDate) {
-    return formatDateAU(baseDate);
-  }
-
-  // If we only have time or part of day
-  if (timeString && partOfDay) {
-    return timeString + " (" + partOfDay + ")";
-  }
-
-  if (timeString) {
-    return "at " + timeString;
-  }
-
-  if (partOfDay) {
-    return partOfDay;
-  }
-
-  // Fallback: return cleaned text
-  return text;
-}
 
 // ------------------------------------------------------------
 // HEALTH CHECK
 // ------------------------------------------------------------
 app.get("/", (req, res) => {
-  res.send("Handyman AI Voice server is running.");
+  res.send("Handyman Realtime Voice server is running.");
 });
 
 // ------------------------------------------------------------
-// GET OR CREATE SESSION OBJECT
+// 1) TWILIO WEBHOOK: start Media Stream instead of Gather
 // ------------------------------------------------------------
-function getSession(from) {
-  if (!sessions[from]) {
-    sessions[from] = {
-      stage: "ask_name",
-      booking: {
-        phone: from,
-        name: "",
-        job: "",
-        suburb: "",
-        time: ""
-      },
-      lastReply: ""
-    };
-  }
-  return sessions[from];
+app.post("/voice", (req, res) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+
+  // Twilio will open a WebSocket to wss://your-domain/twilio-media
+  const start = twiml.start();
+  start.stream({
+    url: `wss://${process.env.PUBLIC_HOST}/twilio-media`
+  });
+
+  // Keep call open for 5 minutes while audio streams
+  twiml.pause({ length: 300 });
+
+  res.type("text/xml");
+  res.send(twiml.toString());
+});
+
+// ------------------------------------------------------------
+// 2) HTTP + WebSocket server
+// ------------------------------------------------------------
+const server = http.createServer(app);
+
+// WebSocket server that Twilio connects to for media stream
+const twilioWss = new WebSocketServer({ noServer: true });
+
+// Helper: set up OpenAI Realtime connection for this call
+function connectOpenAIForCall(callContext) {
+  return new Promise((resolve, reject) => {
+    const openaiWs = new WebSocket(
+      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "OpenAI-Beta": "realtime=v1"
+        }
+      }
+    );
+
+    openaiWs.on("open", () => {
+      console.log("✅ Connected to OpenAI Realtime API");
+
+      // Configure session: Aussie handyman receptionist
+      const sessionUpdate = {
+        type: "session.update",
+        session: {
+          modalities: ["audio", "text"],
+          voice: "alloy", // or another supported voice
+          instructions: `
+You are a warm, calm Aussie receptionist for Barish's handyman business.
+Have a natural phone conversation with the caller.
+Ask for:
+- first name
+- what they need done
+- their suburb
+- their preferred time (date & time or something like "tomorrow morning").
+
+Confirm the details back in one short sentence before moving on.
+Keep responses short (1–2 sentences).
+Sound natural, leave slight pauses, and don't talk over the caller.
+If they sound finished, politely wrap up the call.
+          `,
+          input_audio_transcription: {
+            model: "whisper-1"
+          },
+          // Let the server detect when the caller stops talking
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.5,
+            silence_duration_ms: 500,
+            prefix_padding_ms: 300
+          }
+        }
+      };
+
+      openaiWs.send(JSON.stringify(sessionUpdate));
+      resolve(openaiWs);
+    });
+
+    openaiWs.on("error", (err) => {
+      console.error("❌ OpenAI WS error:", err.message);
+      reject(err);
+    });
+
+    // You can also listen for text transcripts & responses here
+    openaiWs.on("message", (msg) => {
+      try {
+        const event = JSON.parse(msg.toString());
+
+        // Debug some important events
+        if (event.type === "response.audio.delta") {
+          // audio handled elsewhere
+          return;
+        }
+        if (event.type === "response.text.delta") {
+          console.log("📝 AI text:", event.delta);
+        }
+        if (event.type === "response.completed") {
+          console.log("✅ Response completed");
+        }
+        if (event.type === "input_audio_buffer.speech_started") {
+          console.log("🎙️ Caller started speaking");
+        }
+        if (event.type === "input_audio_buffer.speech_stopped") {
+          console.log("🤫 Caller stopped speaking");
+        }
+      } catch (e) {
+        console.error("Error parsing OpenAI message:", e);
+      }
+    });
+  });
 }
 
 // ------------------------------------------------------------
-// FIRST GREETING
+// 3) Handle Twilio Media Stream <-> OpenAI Realtime bridge
 // ------------------------------------------------------------
-app.post("/voice", (req, res) => {
+twilioWss.on("connection", async (twilioSocket) => {
+  console.log("🔌 Twilio media stream connected");
+
+  let streamSid = null;
+  let openaiWs = null;
+
   try {
-    const from = req.body.From || "unknown";
-    const session = getSession(from);
-    session.stage = "ask_name";
+    openaiWs = await connectOpenAIForCall({});
 
-    console.log("📞 /voice endpoint hit from", from);
+    // When we receive events back from OpenAI (audio deltas), forward to Twilio
+    openaiWs.on("message", (msg) => {
+      if (!twilioSocket || twilioSocket.readyState !== WebSocket.OPEN) return;
 
-    const twiml = new twilio.twiml.VoiceResponse();
-    const gather = twiml.gather({
-      input: "speech",
-      action: "/gather",
-      method: "POST",
-      language: "en-AU",
-      speechTimeout: 2,
-      timeout: 10
+      try {
+        const event = JSON.parse(msg.toString());
+
+        // Audio chunks from model
+        if (event.type === "response.audio.delta" && event.delta) {
+          // event.delta is base64 audio (PCM16 24kHz by default)
+          // Twilio expects base64 G.711 μ-law 8kHz.
+          // For a production system, you'd convert formats here.
+          // For now, we just log — this part needs proper audio transcoding.
+
+          // TODO: Implement PCM16 -> μ-law/8kHz conversion.
+          // twilioSocket.send(JSON.stringify({
+          //   event: "media",
+          //   streamSid,
+          //   media: { payload: ulawBase64 }
+          // }));
+
+          console.log("🎧 Got audio delta from OpenAI (length):", event.delta.length);
+        }
+      } catch (e) {
+        console.error("Error handling OpenAI message:", e);
+      }
     });
 
-    gather.say(
-      { voice: "alice", language: "en-AU" },
-      "Hi, you’ve reached Barish’s handyman line. Can I grab your first name?"
-    );
-
-    res.type("text/xml");
-    res.send(twiml.toString());
   } catch (err) {
-    console.error("❌ Error in /voice:", err);
-    res.send("<Response><Say>Sorry, something went wrong.</Say></Response>");
+    console.error("❌ Could not connect to OpenAI Realtime:", err.message);
+    twilioSocket.close();
+    return;
   }
+
+  // Receive audio + control from Twilio
+  twilioSocket.on("message", async (raw) => {
+    try {
+      const data = JSON.parse(raw.toString());
+
+      if (data.event === "start") {
+        streamSid = data.start.streamSid;
+        console.log("📡 Twilio stream started:", streamSid);
+      }
+
+      if (data.event === "media") {
+        // Twilio sends G.711 μ-law audio base64 in data.media.payload
+        const ulawBase64 = data.media.payload;
+
+        // For proper audio, you should convert μ-law 8kHz to PCM16 24kHz or 16kHz
+        // and then send to OpenAI. The Realtime best-practice guide shows how. :contentReference[oaicite:3]{index=3}
+        //
+        // Here we forward it "as-is" as a starting point – you will likely
+        // need to add real transcoding for production quality.
+
+        if (openaiWs && openaiWs.readyState === WebSocket.OPEN) {
+          const audioAppend = {
+            type: "input_audio_buffer.append",
+            audio: ulawBase64
+            // Optionally: audio_format: "g711_ulaw",
+          };
+          openaiWs.send(JSON.stringify(audioAppend));
+        }
+      }
+
+      if (data.event === "stop") {
+        console.log("🛑 Twilio stream stopped");
+        if (openaiWs && openaiWs.readyState === WebSocket.OPEN) {
+          openaiWs.close();
+        }
+        twilioSocket.close();
+      }
+    } catch (e) {
+      console.error("Error parsing Twilio WS message:", e);
+    }
+  });
+
+  twilioSocket.on("close", () => {
+    console.log("❌ Twilio socket closed");
+    if (openaiWs && openaiWs.readyState === WebSocket.OPEN) {
+      openaiWs.close();
+    }
+  });
 });
 
 // ------------------------------------------------------------
-// MAIN LOOP – booking, repeat, cleaning, SMS
+// 4) Upgrade HTTP -> WebSocket for /twilio-media
 // ------------------------------------------------------------
-app.post("/gather", async (req, res) => {
-  try {
-    const from = req.body.From || "unknown";
-    const session = getSession(from);
-
-    const userSpeechRaw = req.body.SpeechResult || "";
-    const cleaned = cleanSpeech(userSpeechRaw);
-    const userSpeech = cleaned.toLowerCase();
-
-    console.log("🗣 Raw speech:", userSpeechRaw);
-    console.log("✨ Cleaned speech:", cleaned);
-
-    const twiml = new twilio.twiml.VoiceResponse();
-
-    // --------------------------------------------------------
-    // REPEAT HANDLING
-    // --------------------------------------------------------
-    if (
-      userSpeech.includes("repeat") ||
-      userSpeech.includes("say again") ||
-      userSpeech.includes("could you say that again") ||
-      userSpeech.includes("can you say that again") ||
-      userSpeech.includes("pardon") ||
-      userSpeech.includes("didn't catch") ||
-      userSpeech.includes("didnt catch")
-    ) {
-      const toRepeat = session.lastReply || "Let me say that again more clearly.";
-
-      twiml.say(
-        { voice: "alice", language: "en-AU" },
-        "Sure, no worries. " + toRepeat
-      );
-
-      const gather = twiml.gather({
-        input: "speech",
-        action: "/gather",
-        method: "POST",
-        language: "en-AU",
-        speechTimeout: 2,
-        timeout: 8
-      });
-
-      gather.say({ voice: "alice", language: "en-AU" }, "");
-
-      res.type("text/xml");
-      return res.send(twiml.toString());
-    }
-
-    // --------------------------------------------------------
-    // BOOKING FLOW
-    // --------------------------------------------------------
-    let reply = "";
-    const b = session.booking;
-
-    switch (session.stage) {
-      case "ask_name": {
-        let name = cleaned
-          .replace(/my name is/i, "")
-          .replace(/i am/i, "")
-          .replace(/i'm/i, "")
-          .replace(/this is/i, "")
-          .replace(/it's/i, "")
-          .replace(/its/i, "")
-          .replace(/the name is/i, "")
-          .trim();
-
-        name = name.split(" ")[0];
-        name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
-
-        b.name = name;
-        session.stage = "ask_job";
-
-        reply =
-          "Nice to meet you, " +
-          name +
-          ". What do you need a hand with today?";
-        break;
-      }
-
-      case "ask_job":
-        b.job = cleaned.trim();
-        session.stage = "ask_suburb";
-        reply = "Got it, " + b.job + ". Which suburb are you in?";
-        break;
-
-      case "ask_suburb": {
-        const suburb = extractSuburb(cleaned);
-
-        console.log("📍 Suburb extracted:", suburb);
-
-        if (!suburb || suburb.length < 2) {
-          reply =
-            "Sorry, I didn't quite catch the suburb. What suburb are you in?";
-          break;
-        }
-
-        b.suburb = suburb;
-        session.stage = "ask_time";
-
-        reply =
-          "Thanks. When would you like us to come out? For example, tomorrow afternoon or next Tuesday morning.";
-        break;
-      }
-
-      case "ask_time": {
-        const timeValue = extractTime(cleaned);
-
-        console.log("⏰ Extracted time:", timeValue);
-
-        if (!timeValue || timeValue.length < 2) {
-          reply = "Sorry, when would you like us to come out?";
-          break;
-        }
-
-        b.time = timeValue;
-        session.stage = "confirm";
-
-        reply =
-          "Beautiful. So I’ve got " +
-          b.job +
-          " in " +
-          b.suburb +
-          " at " +
-          b.time +
-          ". Is that right?";
-        break;
-      }
-
-      case "confirm":
-        console.log("🟦 Confirmation stage — user said:", cleaned);
-
-        if (
-          userSpeech.includes("yes") ||
-          userSpeech.includes("yeah") ||
-          userSpeech.includes("yep") ||
-          userSpeech.includes("sure") ||
-          userSpeech.includes("correct") ||
-          userSpeech.includes("right") ||
-          userSpeech.includes("that's right") ||
-          userSpeech.includes("sounds good") ||
-          userSpeech.includes("okay") ||
-          userSpeech.includes("ok") ||
-          userSpeech.includes("yup")
-        ) {
-          console.log("✅ Confirmation accepted — preparing SMS...");
-          session.stage = "completed";
-
-          reply =
-            "Perfect, " +
-            (b.name || "mate") +
-            ". I’ll send you a text with the booking details and the team will be in touch shortly. Thanks for calling.";
-
-          const customerBody =
-            "Thanks for calling Barish’s Handyman Desk.\n" +
-            "Booking details:\n" +
-            "Name: " +
-            b.name +
-            "\n" +
-            "Job: " +
-            b.job +
-            "\n" +
-            "Suburb: " +
-            b.suburb +
-            "\n" +
-            "Preferred time: " +
-            b.time +
-            "\n" +
-            "We’ll be in touch shortly.";
-
-          const ownerBody =
-            "New handyman enquiry:\n" +
-            "From: " +
-            b.name +
-            " (" +
-            b.phone +
-            ")\n" +
-            "Job: " +
-            b.job +
-            "\n" +
-            "Suburb: " +
-            b.suburb +
-            "\n" +
-            "Preferred time: " +
-            b.time +
-            "\n";
-
-          try {
-            // CUSTOMER SMS
-            console.log("📤 Attempting SMS to customer:", from);
-
-            if (from !== "unknown") {
-              client.messages
-                .create({
-                  from: "+61468067099",
-                  to: from,
-                  body: customerBody
-                })
-                .then((m) =>
-                  console.log("✅ SMS sent to customer:", m.sid)
-                )
-                .catch((e) =>
-                  console.error(
-                    "❌ Error SMS to customer:",
-                    e.message
-                  )
-                );
-            }
-
-            // OWNER SMS
-            console.log("📤 Attempting SMS to owner: +61404983231");
-
-            client.messages
-              .create({
-                from: "+61468067099",
-                to: "+61404983231",
-                body: ownerBody
-              })
-              .then((m) =>
-                console.log("✅ SMS sent to owner:", m.sid)
-              )
-              .catch((e) =>
-                console.error(
-                  "❌ Error SMS to owner:",
-                  e.message
-                )
-              );
-          } catch (smsErr) {
-            console.error("❌ SMS sending error:", smsErr);
-          }
-        } else if (userSpeech.includes("no")) {
-          reply =
-            "No worries, let’s try that again. What do you need help with?";
-          session.stage = "ask_job";
-        } else {
-          reply =
-            "Sorry, I just want to double check. Is that booking correct?";
-        }
-        break;
-
-      case "completed":
-        reply =
-          "Thanks again for calling Barish’s handyman line. Is there anything else you need today?";
-        break;
-
-      default:
-        reply =
-          "Sorry, I didn’t quite get that. Could you say it again?";
-    }
-
-    // SPEAK reply
-    session.lastReply = reply;
-    twiml.say({ voice: "alice", language: "en-AU" }, reply);
-
-    // END or CONTINUE
-    if (session.stage === "completed") {
-      twiml.say(
-        { voice: "alice", language: "en-AU" },
-        "Have a lovely day. Bye for now."
-      );
-      twiml.hangup();
-    } else {
-      const gather = twiml.gather({
-        input: "speech",
-        action: "/gather",
-        method: "POST",
-        language: "en-AU",
-        speechTimeout: 2,
-        timeout: 10
-      });
-      gather.say({ voice: "alice", language: "en-AU" }, "");
-    }
-
-    res.type("text/xml");
-    res.send(twiml.toString());
-  } catch (err) {
-    console.error("❌ Error in /gather:", err);
-    res.type("text/xml");
-    res.send(
-      "<Response><Say>Sorry, I'm having trouble right now.</Say></Response>"
-    );
+server.on("upgrade", (req, socket, head) => {
+  if (req.url === "/twilio-media") {
+    twilioWss.handleUpgrade(req, socket, head, (ws) => {
+      twilioWss.emit("connection", ws, req);
+    });
+  } else {
+    socket.destroy();
   }
 });
 
 // ------------------------------------------------------------
 // START SERVER
 // ------------------------------------------------------------
-app.listen(PORT, () =>
-  console.log(`🚀 Server running on port ${PORT}`)
-);
+server.listen(PORT, () => {
+  console.log(`🚀 Realtime server listening on port ${PORT}`);
+  console.log(`   PUBLIC_HOST should be set to your Railway / domain host (no https://)`);
+});
