@@ -31,10 +31,19 @@ function cleanSpeech(input) {
 
   let text = input.toLowerCase();
 
+  // Remove long repeated characters
   text = text.replace(/([a-z])\1{2,}/gi, "");
+
+  // Remove hesitation/filler words
   text = text.replace(/\b(um+|uh+|erm+|hmm+|huh+|ah+|mmm+)\b/gi, "");
+
+  // Remove isolated noise syllables
   text = text.replace(/\b(m+|n+|a+)\b/gi, "");
+
+  // Remove double-letter noises inside sentences
   text = text.replace(/\b([a-z])\1{1,}\b/gi, "");
+
+  // Remove extra spaces
   text = text.replace(/\s+/g, " ").trim();
 
   return text;
@@ -48,24 +57,68 @@ function extractSuburb(input) {
 
   let text = input.toLowerCase().trim();
 
-  text = text.replace(
-    /\b(i'm|i am|im|in|at|from|my suburb is|suburb is|it's|its|the suburb is|i live in|live in)\b/gi,
-    ""
-  ).trim();
+  // Remove leading phrases
+  text = text
+    .replace(
+      /\b(i'm|i am|im|in|at|from|my suburb is|suburb is|it's|its|the suburb is|i live in|live in)\b/gi,
+      ""
+    )
+    .trim();
 
+  // Remove filler
   text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
+
+  // Remove repeated letters (crraaigieburn -> craigieburn)
   text = text.replace(/([a-z])\1{2,}/gi, "$1");
+
+  // Clean remaining noise syllables
   text = text.replace(/\b(m+|n+|a+)\b/gi, "").trim();
 
+  // Capitalize each word
   return text
     .split(" ")
-    .filter(w => w.length > 0)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .filter((w) => w.length > 0)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
 
 // ------------------------------------------------------------
-// ⏰ TIME AUTO DETECTION
+// ⏰ DATE/TIME HELPERS
+// ------------------------------------------------------------
+function addDays(date, days) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function formatDateAU(date) {
+  return date.toLocaleDateString("en-AU", {
+    weekday: "long",
+    day: "numeric",
+    month: "long"
+  });
+}
+
+function formatTimeDisplay(hour, minute, ampm) {
+  function pad(n) {
+    return n < 10 ? "0" + n : "" + n;
+  }
+
+  if (!ampm) {
+    return hour + ":" + pad(minute);
+  }
+
+  const ampmLower = ampm.toLowerCase();
+  let h24 = hour;
+  if (ampmLower === "pm" && hour < 12) h24 = hour + 12;
+  if (ampmLower === "am" && hour === 12) h24 = 0;
+
+  const displayHour = ((h24 + 11) % 12) + 1;
+  return displayHour + ":" + pad(minute) + " " + ampmLower;
+}
+
+// ------------------------------------------------------------
+// ⏰ TIME + DATE AUTO DETECTION
 // ------------------------------------------------------------
 function extractTime(input) {
   if (!input) return "";
@@ -73,58 +126,150 @@ function extractTime(input) {
   let text = input.toLowerCase().trim();
 
   // Remove filler
-  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "");
+  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
 
-  // Common relative days
-  const relativeDays = {
-    "today": "today",
-    "tomorrow": "tomorrow",
-    "the day after tomorrow": "day after tomorrow",
-    "next week": "next week",
-    "this week": "this week",
-    "this weekend": "this weekend",
-  };
+  const now = new Date();
+  let baseDate = null;
+  let partOfDay = "";
+  let timeString = "";
 
-  for (let key in relativeDays) {
-    if (text.includes(key)) return key;
+  // Parts of day
+  if (text.includes("morning")) partOfDay = "morning";
+  else if (text.includes("afternoon")) partOfDay = "afternoon";
+  else if (text.includes("evening")) partOfDay = "evening";
+  else if (text.includes("tonight")) partOfDay = "tonight";
+  else if (text.includes("lunch")) partOfDay = "around lunch";
+
+  // Relative days
+  if (text.includes("day after tomorrow")) {
+    baseDate = addDays(now, 2);
+  } else if (text.includes("tomorrow")) {
+    baseDate = addDays(now, 1);
+  } else if (text.includes("today")) {
+    baseDate = addDays(now, 0);
   }
 
-  // Detect weekdays
   const weekdays = [
-    "monday","tuesday","wednesday","thursday","friday","saturday","sunday"
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday"
   ];
+  const todayIndex = now.getDay();
 
-  for (let day of weekdays) {
-    if (text.includes(day)) {
-
-      // Extract time (3, 3pm, 3:30, etc.)
-      const timeMatch = text.match(/(\d{1,2})(:\d{2})?\s?(am|pm)?/);
-      if (timeMatch) {
-        return `${day} at ${timeMatch[0]}`;
+  // Weekdays with "next ..."
+  if (!baseDate) {
+    for (let i = 0; i < weekdays.length; i++) {
+      const day = weekdays[i];
+      if (text.includes("next " + day)) {
+        let diff = (i - todayIndex + 7) % 7;
+        if (diff === 0) diff = 7;
+        baseDate = addDays(now, diff + 7); // skip to next week
+        break;
       }
-
-      return day;
     }
   }
 
-  // Parts of day
-  if (text.includes("morning")) return "morning";
-  if (text.includes("afternoon")) return "afternoon";
-  if (text.includes("evening")) return "evening";
-  if (text.includes("tonight")) return "tonight";
-  if (text.includes("lunch")) return "around lunch";
+  // Plain weekdays
+  if (!baseDate) {
+    for (let i = 0; i < weekdays.length; i++) {
+      const day = weekdays[i];
+      if (text.includes(day)) {
+        let diff = (i - todayIndex + 7) % 7;
+        if (diff === 0) diff = 7; // interpret as upcoming, not today
+        baseDate = addDays(now, diff);
+        break;
+      }
+    }
+  }
 
-  // Detect date like 12, 12th, 23rd
-  const dateMatch = text.match(/\b(\d{1,2})(st|nd|rd|th)?\b/);
-  if (dateMatch) return dateMatch[0];
+  // Numeric day of month (12, 12th, 23rd, etc.)
+  if (!baseDate) {
+    const dateMatch = text.match(/\b(\d{1,2})(st|nd|rd|th)?\b/);
+    if (dateMatch) {
+      let dayNum = parseInt(dateMatch[1], 10);
+      let month = now.getMonth();
+      let year = now.getFullYear();
+      let candidate = new Date(year, month, dayNum);
 
-  // Detect numeric time like 3pm, 9 am, 7:30, 1130
-  const timeMatch =
-    text.match(/(\d{1,2})(:\d{2})?\s?(am|pm)?/) ||
+      if (candidate < now) {
+        month += 1;
+        if (month > 11) {
+          month = 0;
+          year += 1;
+        }
+        candidate = new Date(year, month, dayNum);
+      }
+      baseDate = candidate;
+    }
+  }
+
+  // Time of day: 3pm, 3 pm, 7:30, 1130, etc.
+  let timeMatch =
+    text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/) ||
     text.match(/\b(\d{3,4})\b/);
 
-  if (timeMatch) return timeMatch[0];
+  if (timeMatch) {
+    let hour = parseInt(timeMatch[1], 10);
+    let minute = 0;
+    let ampm = null;
 
+    if (timeMatch[2]) {
+      minute = parseInt(timeMatch[2].replace(":", ""), 10);
+    }
+
+    if (timeMatch[3]) {
+      ampm = timeMatch[3];
+    }
+
+    // If they say "evening" and no am/pm, assume pm, same for morning
+    if (!ampm) {
+      if (partOfDay === "evening") ampm = "pm";
+      else if (partOfDay === "morning") ampm = "am";
+    }
+
+    // If they gave 3 or 4 digit time like "1530"
+    if (!timeMatch[3] && timeMatch[0].length === 4 && !timeMatch[2]) {
+      const str = timeMatch[0];
+      hour = parseInt(str.slice(0, 2), 10);
+      minute = parseInt(str.slice(2), 10);
+    }
+
+    timeString = formatTimeDisplay(hour, minute, ampm);
+  }
+
+  // If we have a base date AND a time
+  if (baseDate && timeString) {
+    return formatDateAU(baseDate) + " at " + timeString;
+  }
+
+  // If we have a base date and just part of day
+  if (baseDate && partOfDay) {
+    return formatDateAU(baseDate) + " " + partOfDay;
+  }
+
+  // If we only have a base date
+  if (baseDate) {
+    return formatDateAU(baseDate);
+  }
+
+  // If we only have time or part of day
+  if (timeString && partOfDay) {
+    return timeString + " (" + partOfDay + ")";
+  }
+
+  if (timeString) {
+    return "at " + timeString;
+  }
+
+  if (partOfDay) {
+    return partOfDay;
+  }
+
+  // Fallback: return cleaned text
   return text;
 }
 
@@ -220,7 +365,10 @@ app.post("/gather", async (req, res) => {
     ) {
       const toRepeat = session.lastReply || "Let me say that again more clearly.";
 
-      twiml.say({ voice: "alice", language: "en-AU" }, "Sure, no worries. " + toRepeat);
+      twiml.say(
+        { voice: "alice", language: "en-AU" },
+        "Sure, no worries. " + toRepeat
+      );
 
       const gather = twiml.gather({
         input: "speech",
@@ -261,7 +409,10 @@ app.post("/gather", async (req, res) => {
         b.name = name;
         session.stage = "ask_job";
 
-        reply = "Nice to meet you, " + name + ". What do you need a hand with today?";
+        reply =
+          "Nice to meet you, " +
+          name +
+          ". What do you need a hand with today?";
         break;
       }
 
@@ -277,7 +428,8 @@ app.post("/gather", async (req, res) => {
         console.log("📍 Suburb extracted:", suburb);
 
         if (!suburb || suburb.length < 2) {
-          reply = "Sorry, I didn't quite catch the suburb. What suburb are you in?";
+          reply =
+            "Sorry, I didn't quite catch the suburb. What suburb are you in?";
           break;
         }
 
@@ -289,9 +441,6 @@ app.post("/gather", async (req, res) => {
         break;
       }
 
-      // ------------------------------------------------------------
-      // ⏰ NEW TIME EXTRACTION BLOCK
-      // ------------------------------------------------------------
       case "ask_time": {
         const timeValue = extractTime(cleaned);
 
@@ -316,9 +465,6 @@ app.post("/gather", async (req, res) => {
         break;
       }
 
-      // ------------------------------------------------------------
-      // CONFIRMATION
-      // ------------------------------------------------------------
       case "confirm":
         console.log("🟦 Confirmation stage — user said:", cleaned);
 
@@ -346,18 +492,36 @@ app.post("/gather", async (req, res) => {
           const customerBody =
             "Thanks for calling Barish’s Handyman Desk.\n" +
             "Booking details:\n" +
-            "Name: " + b.name + "\n" +
-            "Job: " + b.job + "\n" +
-            "Suburb: " + b.suburb + "\n" +
-            "Preferred time: " + b.time + "\n" +
+            "Name: " +
+            b.name +
+            "\n" +
+            "Job: " +
+            b.job +
+            "\n" +
+            "Suburb: " +
+            b.suburb +
+            "\n" +
+            "Preferred time: " +
+            b.time +
+            "\n" +
             "We’ll be in touch shortly.";
 
           const ownerBody =
             "New handyman enquiry:\n" +
-            "From: " + b.name + " (" + b.phone + ")\n" +
-            "Job: " + b.job + "\n" +
-            "Suburb: " + b.suburb + "\n" +
-            "Preferred time: " + b.time + "\n";
+            "From: " +
+            b.name +
+            " (" +
+            b.phone +
+            ")\n" +
+            "Job: " +
+            b.job +
+            "\n" +
+            "Suburb: " +
+            b.suburb +
+            "\n" +
+            "Preferred time: " +
+            b.time +
+            "\n";
 
           try {
             // CUSTOMER SMS
@@ -370,8 +534,15 @@ app.post("/gather", async (req, res) => {
                   to: from,
                   body: customerBody
                 })
-                .then(m => console.log("✅ SMS sent to customer:", m.sid))
-                .catch(e => console.error("❌ Error SMS to customer:", e.message));
+                .then((m) =>
+                  console.log("✅ SMS sent to customer:", m.sid)
+                )
+                .catch((e) =>
+                  console.error(
+                    "❌ Error SMS to customer:",
+                    e.message
+                  )
+                );
             }
 
             // OWNER SMS
@@ -383,26 +554,36 @@ app.post("/gather", async (req, res) => {
                 to: "+61404983231",
                 body: ownerBody
               })
-              .then(m => console.log("✅ SMS sent to owner:", m.sid))
-              .catch(e => console.error("❌ Error SMS to owner:", e.message));
+              .then((m) =>
+                console.log("✅ SMS sent to owner:", m.sid)
+              )
+              .catch((e) =>
+                console.error(
+                  "❌ Error SMS to owner:",
+                  e.message
+                )
+              );
           } catch (smsErr) {
             console.error("❌ SMS sending error:", smsErr);
           }
-
         } else if (userSpeech.includes("no")) {
-          reply = "No worries, let’s try that again. What do you need help with?";
+          reply =
+            "No worries, let’s try that again. What do you need help with?";
           session.stage = "ask_job";
         } else {
-          reply = "Sorry, I just want to double check. Is that booking correct?";
+          reply =
+            "Sorry, I just want to double check. Is that booking correct?";
         }
         break;
 
       case "completed":
-        reply = "Thanks again for calling Barish’s handyman line. Is there anything else you need today?";
+        reply =
+          "Thanks again for calling Barish’s handyman line. Is there anything else you need today?";
         break;
 
       default:
-        reply = "Sorry, I didn’t quite get that. Could you say it again?";
+        reply =
+          "Sorry, I didn’t quite get that. Could you say it again?";
     }
 
     // SPEAK reply
@@ -430,11 +611,12 @@ app.post("/gather", async (req, res) => {
 
     res.type("text/xml");
     res.send(twiml.toString());
-
   } catch (err) {
     console.error("❌ Error in /gather:", err);
     res.type("text/xml");
-    res.send("<Response><Say>Sorry, I'm having trouble right now.</Say></Response>");
+    res.send(
+      "<Response><Say>Sorry, I'm having trouble right now.</Say></Response>"
+    );
   }
 });
 
