@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3000;
 
 // Debug variables
 console.log("TWILIO SID:", process.env.TWILIO_SID ? "OK" : "MISSING");
+console.log("TWILIO AUTH:", process.env.TWILIO_AUTH ? "OK" : "MISSING");
 console.log("OPENAI KEY:", process.env.OPENAI_API_KEY ? "OK" : "MISSING");
 
 // Twilio + OpenAI clients
@@ -22,12 +23,42 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 // In-memory sessions (per caller)
 const sessions = {}; // { "+6146...": { stage, booking, lastReply } }
 
-// Health check
+// ------------------------------------------------------------
+// 🧹 SPEECH CLEANING FUNCTION (Removes mmmm, nnn, uhh, etc.)
+// ------------------------------------------------------------
+function cleanSpeech(input) {
+  if (!input) return "";
+
+  let text = input.toLowerCase();
+
+  // Remove long repeated characters like 'mmmmmm', 'nnnnnn', 'aaaaaa'
+  text = text.replace(/([a-z])\1{2,}/gi, "");
+
+  // Remove hesitation/filler words
+  text = text.replace(/\b(um+|uh+|erm+|hmm+|huh+|ah+|mmm+)\b/gi, "");
+
+  // Remove isolated noise syllables
+  text = text.replace(/\b(m+|n+|a+)\b/gi, "");
+
+  // Remove "aaa" / "nnnn" mid-sentence noise
+  text = text.replace(/\b([a-z])\1{1,}\b/gi, "");
+
+  // Remove extra spaces
+  text = text.replace(/\s+/g, " ").trim();
+
+  return text;
+}
+
+// ------------------------------------------------------------
+// HEALTH CHECK
+// ------------------------------------------------------------
 app.get("/", (req, res) => {
   res.send("Handyman AI Voice server is running.");
 });
 
-// Helper: get or create session
+// ------------------------------------------------------------
+// GET OR CREATE SESSION OBJECT
+// ------------------------------------------------------------
 function getSession(from) {
   if (!sessions[from]) {
     sessions[from] = {
@@ -45,7 +76,9 @@ function getSession(from) {
   return sessions[from];
 }
 
-// FIRST GREETING + first question
+// ------------------------------------------------------------
+// FIRST GREETING
+// ------------------------------------------------------------
 app.post("/voice", (req, res) => {
   try {
     const from = req.body.From || "unknown";
@@ -55,7 +88,6 @@ app.post("/voice", (req, res) => {
     console.log("📞 /voice endpoint hit from", from);
 
     const twiml = new twilio.twiml.VoiceResponse();
-
     const gather = twiml.gather({
       input: "speech",
       action: "/gather",
@@ -78,21 +110,29 @@ app.post("/voice", (req, res) => {
   }
 });
 
-// MAIN LOOP – booking + repeat + SMS
+// ------------------------------------------------------------
+// MAIN LOOP – booking, repeat, cleaning, SMS
+// ------------------------------------------------------------
 app.post("/gather", async (req, res) => {
   try {
     const from = req.body.From || "unknown";
     const session = getSession(from);
 
+    // RAW speech from Twilio
     const userSpeechRaw = req.body.SpeechResult || "";
-    const userSpeech = userSpeechRaw.toLowerCase();
-    console.log("🗣 User said:", userSpeechRaw);
+
+    // CLEAN speech
+    const cleaned = cleanSpeech(userSpeechRaw);
+    const userSpeech = cleaned.toLowerCase();
+
+    console.log("🗣 Raw speech:", userSpeechRaw);
+    console.log("✨ Cleaned speech:", cleaned);
 
     const twiml = new twilio.twiml.VoiceResponse();
 
-    // ----------------------------------------
+    // --------------------------------------------------------
     // 1) REPEAT HANDLING
-    // ----------------------------------------
+    // --------------------------------------------------------
     if (
       userSpeech.includes("repeat") ||
       userSpeech.includes("say again") ||
@@ -104,12 +144,10 @@ app.post("/gather", async (req, res) => {
     ) {
       const toRepeat =
         session.lastReply || "Let me say that again more clearly.";
+
       const repeatLine = "Sure, no worries. " + toRepeat;
 
-      twiml.say(
-        { voice: "alice", language: "en-AU" },
-        repeatLine
-      );
+      twiml.say({ voice: "alice", language: "en-AU" }, repeatLine);
 
       const gather = twiml.gather({
         input: "speech",
@@ -121,20 +159,20 @@ app.post("/gather", async (req, res) => {
       });
 
       gather.say({ voice: "alice", language: "en-AU" }, "");
+
       res.type("text/xml");
       return res.send(twiml.toString());
     }
 
-    // ----------------------------------------
-    // 2) BOOKING FLOW (STATE MACHINE)
-    // ----------------------------------------
+    // --------------------------------------------------------
+    // 2) BOOKING FLOW
+    // --------------------------------------------------------
     let reply = "";
     const b = session.booking;
 
     switch (session.stage) {
-
       case "ask_name": {
-        let name = userSpeechRaw
+        let name = cleaned
           .replace(/my name is/i, "")
           .replace(/i am/i, "")
           .replace(/i'm/i, "")
@@ -150,26 +188,25 @@ app.post("/gather", async (req, res) => {
         b.name = name;
         session.stage = "ask_job";
 
-        reply =
-          "Nice to meet you, " + name + ". What do you need a hand with today?";
+        reply = "Nice to meet you, " + name + ". What do you need a hand with today?";
         break;
       }
 
       case "ask_job":
-        b.job = userSpeechRaw.trim();
+        b.job = cleaned.trim();
         session.stage = "ask_suburb";
         reply = "Got it, " + b.job + ". Which suburb are you in?";
         break;
 
       case "ask_suburb":
-        b.suburb = userSpeechRaw.trim();
+        b.suburb = cleaned.trim();
         session.stage = "ask_time";
         reply =
           "Thanks. When would you like us to come out? For example, tomorrow afternoon or next Tuesday morning.";
         break;
 
       case "ask_time":
-        b.time = userSpeechRaw.trim();
+        b.time = cleaned.trim();
         session.stage = "confirm";
         reply =
           "Beautiful. So I’ve got " +
@@ -182,7 +219,7 @@ app.post("/gather", async (req, res) => {
         break;
 
       case "confirm":
-        console.log("🟦 Confirmation stage — user said:", userSpeechRaw);
+        console.log("🟦 Confirmation stage — user said:", cleaned);
 
         if (
           userSpeech.includes("yes") ||
@@ -192,7 +229,6 @@ app.post("/gather", async (req, res) => {
           userSpeech.includes("correct") ||
           userSpeech.includes("right") ||
           userSpeech.includes("that's right") ||
-          userSpeech.includes("that’s right") ||
           userSpeech.includes("sounds good") ||
           userSpeech.includes("okay") ||
           userSpeech.includes("ok") ||
@@ -206,6 +242,7 @@ app.post("/gather", async (req, res) => {
             (b.name || "mate") +
             ". I’ll send you a text with the booking details and the team will be in touch shortly. Thanks for calling.";
 
+          // Prepare SMS text
           const customerBody =
             "Thanks for calling Barish’s Handyman Desk.\n" +
             "Booking details:\n" +
@@ -242,9 +279,7 @@ app.post("/gather", async (req, res) => {
             }
 
             // OWNER SMS
-            console.log(
-              "📤 Attempting SMS to owner: +61404983231"
-            );
+            console.log("📤 Attempting SMS to owner: +61404983231");
 
             client.messages
               .create({
@@ -261,13 +296,12 @@ app.post("/gather", async (req, res) => {
           } catch (smsErr) {
             console.error("❌ SMS sending error:", smsErr);
           }
+
         } else if (userSpeech.includes("no")) {
-          reply =
-            "No worries, let’s try that again. What do you need help with?";
+          reply = "No worries, let’s try that again. What do you need help with?";
           session.stage = "ask_job";
         } else {
-          reply =
-            "Sorry, I just want to double check. Is that booking correct?";
+          reply = "Sorry, I just want to double check. Is that booking correct?";
         }
         break;
 
@@ -277,26 +311,15 @@ app.post("/gather", async (req, res) => {
         break;
 
       default:
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a warm, calm Aussie receptionist for a handyman service. Speak slowly, clearly, and conversationally in 1–2 short sentences."
-            },
-            { role: "user", content: userSpeechRaw }
-          ]
-        });
-        reply = completion.choices[0].message.content.trim();
-        break;
+        reply =
+          "Sorry, I didn’t quite get that. Could you say it again?";
     }
 
-    // SPEAK REPLY
+    // SPEAK reply
     session.lastReply = reply;
     twiml.say({ voice: "alice", language: "en-AU" }, reply);
 
-    // END OR CONTINUE
+    // END or CONTINUE
     if (session.stage === "completed") {
       twiml.say(
         { voice: "alice", language: "en-AU" },
@@ -327,7 +350,9 @@ app.post("/gather", async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------
 // START SERVER
+// ------------------------------------------------------------
 app.listen(PORT, () =>
   console.log(`🚀 Server running on port ${PORT}`)
 );
