@@ -31,7 +31,7 @@ function cleanSpeech(input) {
 
   let text = input.toLowerCase();
 
-  // Remove long repeated characters like 'mmmmmm', 'nnnnnn', 'aaaaaa'
+  // Remove long repeated characters
   text = text.replace(/([a-z])\1{2,}/gi, "");
 
   // Remove hesitation/filler words
@@ -40,13 +40,44 @@ function cleanSpeech(input) {
   // Remove isolated noise syllables
   text = text.replace(/\b(m+|n+|a+)\b/gi, "");
 
-  // Remove "aaa" / "nnnn" mid-sentence noise
+  // Remove double-letter noises inside sentences
   text = text.replace(/\b([a-z])\1{1,}\b/gi, "");
 
   // Remove extra spaces
   text = text.replace(/\s+/g, " ").trim();
 
   return text;
+}
+
+// ------------------------------------------------------------
+// 🗺️ SUBURB AUTO DETECTION
+// ------------------------------------------------------------
+function extractSuburb(input) {
+  if (!input) return "";
+
+  let text = input.toLowerCase().trim();
+
+  // Remove leading phrases
+  text = text.replace(
+    /\b(i'm|i am|im|in|at|from|my suburb is|suburb is|it's|its|the suburb is|i live in|live in)\b/gi,
+    ""
+  ).trim();
+
+  // Remove filler
+  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
+
+  // Remove repeated letters (crraaigieburn -> craigieburn)
+  text = text.replace(/([a-z])\1{2,}/gi, "$1");
+
+  // Clean remaining noise syllables
+  text = text.replace(/\b(m+|n+|a+)\b/gi, "").trim();
+
+  // Capitalize each word
+  return text
+    .split(" ")
+    .filter(w => w.length > 0)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 // ------------------------------------------------------------
@@ -118,10 +149,7 @@ app.post("/gather", async (req, res) => {
     const from = req.body.From || "unknown";
     const session = getSession(from);
 
-    // RAW speech from Twilio
     const userSpeechRaw = req.body.SpeechResult || "";
-
-    // CLEAN speech
     const cleaned = cleanSpeech(userSpeechRaw);
     const userSpeech = cleaned.toLowerCase();
 
@@ -131,7 +159,7 @@ app.post("/gather", async (req, res) => {
     const twiml = new twilio.twiml.VoiceResponse();
 
     // --------------------------------------------------------
-    // 1) REPEAT HANDLING
+    // REPEAT HANDLING
     // --------------------------------------------------------
     if (
       userSpeech.includes("repeat") ||
@@ -142,12 +170,9 @@ app.post("/gather", async (req, res) => {
       userSpeech.includes("didn't catch") ||
       userSpeech.includes("didnt catch")
     ) {
-      const toRepeat =
-        session.lastReply || "Let me say that again more clearly.";
+      const toRepeat = session.lastReply || "Let me say that again more clearly.";
 
-      const repeatLine = "Sure, no worries. " + toRepeat;
-
-      twiml.say({ voice: "alice", language: "en-AU" }, repeatLine);
+      twiml.say({ voice: "alice", language: "en-AU" }, "Sure, no worries. " + toRepeat);
 
       const gather = twiml.gather({
         input: "speech",
@@ -165,7 +190,7 @@ app.post("/gather", async (req, res) => {
     }
 
     // --------------------------------------------------------
-    // 2) BOOKING FLOW
+    // BOOKING FLOW
     // --------------------------------------------------------
     let reply = "";
     const b = session.booking;
@@ -198,12 +223,23 @@ app.post("/gather", async (req, res) => {
         reply = "Got it, " + b.job + ". Which suburb are you in?";
         break;
 
-      case "ask_suburb":
-        b.suburb = cleaned.trim();
+      case "ask_suburb": {
+        const suburb = extractSuburb(cleaned);
+
+        console.log("📍 Suburb extracted:", suburb);
+
+        if (!suburb || suburb.length < 2) {
+          reply = "Sorry, I didn't quite catch the suburb. What suburb are you in?";
+          break;
+        }
+
+        b.suburb = suburb;
         session.stage = "ask_time";
+
         reply =
           "Thanks. When would you like us to come out? For example, tomorrow afternoon or next Tuesday morning.";
         break;
+      }
 
       case "ask_time":
         b.time = cleaned.trim();
@@ -270,9 +306,7 @@ app.post("/gather", async (req, res) => {
                   to: from,
                   body: customerBody
                 })
-                .then((m) =>
-                  console.log("✅ SMS sent to customer:", m.sid)
-                )
+                .then((m) => console.log("✅ SMS sent to customer:", m.sid))
                 .catch((e) =>
                   console.error("❌ Error SMS to customer:", e.message)
                 );
@@ -287,9 +321,7 @@ app.post("/gather", async (req, res) => {
                 to: "+61404983231",
                 body: ownerBody
               })
-              .then((m) =>
-                console.log("✅ SMS sent to owner:", m.sid)
-              )
+              .then((m) => console.log("✅ SMS sent to owner:", m.sid))
               .catch((e) =>
                 console.error("❌ Error SMS to owner:", e.message)
               );
@@ -311,8 +343,7 @@ app.post("/gather", async (req, res) => {
         break;
 
       default:
-        reply =
-          "Sorry, I didn’t quite get that. Could you say it again?";
+        reply = "Sorry, I didn’t quite get that. Could you say it again?";
     }
 
     // SPEAK reply
