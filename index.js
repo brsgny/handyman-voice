@@ -389,16 +389,24 @@ app.post("/gather", async (req, res) => {
         break;
       }
 
-      case "ask_job":
-        if (cleaned.trim().length < 8) {
-          reply = "Could you please tell me a bit more about the job?";
-          break;
-        }
+     case "ask_job":
+      // Start recording
+      twiml.record({
+        recordingStatusCallback: "/saveRecording",
+        playBeep: false,
+        maxLength: 30
+      });
 
-        b.job = cleaned.trim();
-        session.stage = "ask_suburb";
-        reply = "Got it. Which suburb are you in?";
+      if (cleaned.trim().length < 8) {
+        reply = "Could you please tell me a bit more about the job?";
         break;
+      }
+
+      b.job = cleaned.trim();
+      session.stage = "ask_suburb";
+      reply = "Got it. Which suburb are you in?";
+      break;
+
 
       case "ask_suburb": {
         const suburb = extractSuburb(cleaned);
@@ -561,15 +569,17 @@ const sheets = google.sheets({ version: "v4", auth });
 
 async function saveToGoogleSheet(data) {
   try {
-    const values = [[
-      new Date().toLocaleString("en-AU", { timeZone: "Australia/Melbourne" }),
-      data.phone || "",
-      data.name || "",
-      data.job || "",
-      data.suburb || "",
-      data.time || "",
-      data.stage || ""
-    ]];
+   const values = [[
+    new Date().toLocaleString("en-AU"),
+    data.phone || "",
+    data.name || "",
+    data.job || "",
+    data.suburb || "",
+    data.time || "",
+    data.recording || "",
+    data.stage || ""
+]];
+
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEETS_ID,
