@@ -314,16 +314,29 @@ app.post("/voice", (req, res) => {
 // ------------------------------------------------------------
 // MAIN LOOP – booking, repeat, cleaning, SMS
 // ------------------------------------------------------------
-app.post("/gather", async (req, res) => {
-  try {
-    const from = req.body.From || "unknown";
-    const session = getSession(from);
+app.post("/saveRecording", async (req, res) => {
+  const recordingUrl = req.body.RecordingUrl || "";
+  const from = req.body.From || "";
 
-    const userSpeechRaw = req.body.SpeechResult || "";
-    const cleaned = cleanSpeech(userSpeechRaw);
-    const userSpeech = cleaned.toLowerCase();
+  console.log("🎤 Recording URL:", recordingUrl);
 
-    const twiml = new twilio.twiml.VoiceResponse();
+  if (recordingUrl) {
+    await saveToGoogleSheet({
+      phone: from,
+      recording: recordingUrl + ".mp3",
+      stage: "job_recording"
+    });
+
+    client.messages.create({
+      from: "+61468067099",
+      to: "+61404983231",
+      body: `New job voice message:\n${recordingUrl}.mp3`
+    });
+  }
+
+  res.send("OK");
+});
+
 
     // --------------------------------------------------------
     // REPEAT HANDLING
@@ -390,8 +403,10 @@ app.post("/gather", async (req, res) => {
       twiml.record({
         recordingStatusCallback: "/saveRecording",
         playBeep: false,
-        maxLength: 30
+        timeout: 1.5,
+        maxLength: 12
       });
+
 
       if (cleaned.trim().length < 8) {
         reply = "Could you please tell me a bit more about the job?";
@@ -400,7 +415,7 @@ app.post("/gather", async (req, res) => {
 
       b.job = cleaned.trim();
       session.stage = "ask_suburb";
-      reply = "Got it. Which suburb are you in?";
+      reply = "thanks for details you have given me now. Which suburb are you in?";
       break;
 
 
@@ -408,7 +423,7 @@ app.post("/gather", async (req, res) => {
         const suburb = extractSuburb(cleaned);
 
         if (!suburb || suburb.length < 2) {
-          reply = "Sorry, what suburb are you in?";
+          reply = "Sorry I didnt catch that, what suburb are you in?";
           break;
         }
 
@@ -423,14 +438,15 @@ app.post("/gather", async (req, res) => {
         const timeValue = extractTime(cleaned);
 
         if (!timeValue) {
-          reply = "Sorry, when would you like us to come out?";
+          reply = "Sorry I didnt catch that, when would you like us to come out?";
           break;
         }
 
         b.time = timeValue;
         session.stage = "confirm";
 
-        reply = `Beautiful. So I’ve got ${b.job} in ${b.suburb} at ${b.time}. Is that right?`;
+        reply = "Thanks. Can I confirm the booking — is everything you said correct?";
+
         break;
       }
 
@@ -464,16 +480,14 @@ app.post("/saveRecording", async (req, res) => {
   console.log("🎤 Recording URL:", recordingUrl);
 
   if (recordingUrl) {
-    // Save to Google Sheets
     await saveToGoogleSheet({
       phone: from,
-      recording: recordingUrl,
+      recording: recordingUrl + ".mp3",
       stage: "job_recording"
     });
 
-    // Send SMS to handyman
     client.messages.create({
-      from: "+61468067099",
+      from: process.env.TWILIO_NUMBER,
       to: "+61404983231",
       body: `New job voice message:\n${recordingUrl}.mp3`
     });
