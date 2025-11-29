@@ -343,11 +343,15 @@ function sendVoicemailFallback(twiml, res) {
     "I'm still having trouble hearing you. No worries — please leave a short voicemail after the beep and I'll pass it on to Barish."
   );
 
-  twiml.record({
-    recordingStatusCallback: "/voicemail",
-    playBeep: true,
-    maxLength: 120 // ~2 minutes (your option D: practically unlimited for real calls)
-  });
+ twiml.record({
+  recordingStatusCallback: "/saveRecording",
+  playBeep: false,
+  timeout: 5,              // ✔ allows natural pauses
+  trim: "do-not-trim",
+  maxLength: 60,           // ✔ allows longer job description
+  speechTimeout: "auto"    // ✔ Twilio detects when you actually finish talking
+});
+
 
   twiml.hangup();
 
