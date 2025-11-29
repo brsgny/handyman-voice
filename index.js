@@ -21,7 +21,8 @@ const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_AUTH);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // In-memory sessions (per caller)
-const sessions = {}; // { "+6146...": { stage, booking, lastReply } }
+// { "+6146...": { stage, booking, lastReply, failures } }
+const sessions = {};
 
 // ------------------------------------------------------------
 // 🧹 SPEECH CLEANING FUNCTION
@@ -240,7 +241,8 @@ function getSession(from) {
         suburb: "",
         time: ""
       },
-      lastReply: ""
+      lastReply: "",
+      failures: 0   // 👈 for voicemail fallback
     };
   }
   return sessions[from];
@@ -254,6 +256,7 @@ app.post("/voice", (req, res) => {
     const from = req.body.From || "unknown";
     const session = getSession(from);
     session.stage = "ask_name";
+    session.failures = 0;
 
     const twiml = new twilio.twiml.VoiceResponse();
     const gather = twiml.gather({
@@ -261,7 +264,7 @@ app.post("/voice", (req, res) => {
       action: "/gather",
       method: "POST",
       language: "en-AU",
-      speechTimeout: 1.5,
+      speechTimeout: "auto",   // use auto end-of-speech
       timeout: 8,
       hints: "my name is, i am, this is"
     });
@@ -280,13 +283,13 @@ app.post("/voice", (req, res) => {
 });
 
 // ------------------------------------------------------------
-// 🔥 GLOBAL VOICE RECORDING ENDPOINT (Option A)
+// 🔥 GLOBAL VOICE RECORDING ENDPOINT FOR JOB DETAIL
 // ------------------------------------------------------------
 app.post("/saveRecording", async (req, res) => {
   const recordingUrl = req.body.RecordingUrl || "";
   const from = req.body.From || "";
 
-  console.log("🎤 Recording URL:", recordingUrl);
+  console.log("🎤 Recording URL (job):", recordingUrl);
 
   if (recordingUrl) {
     await saveToGoogleSheet({
@@ -304,6 +307,53 @@ app.post("/saveRecording", async (req, res) => {
 
   res.send("OK");
 });
+
+// ------------------------------------------------------------
+// 🔔 VOICEMAIL CALLBACK ENDPOINT
+// ------------------------------------------------------------
+app.post("/voicemail", async (req, res) => {
+  const recordingUrl = req.body.RecordingUrl || "";
+  const from = req.body.From || "";
+
+  console.log("📨 Voicemail URL:", recordingUrl);
+
+  if (recordingUrl) {
+    await saveToGoogleSheet({
+      phone: from,
+      recording: recordingUrl + ".mp3",
+      stage: "voicemail"
+    });
+
+    client.messages.create({
+      from: "+61468067099",
+      to: "+61404983231",
+      body: `New voicemail message:\n${recordingUrl}.mp3`
+    });
+  }
+
+  res.send("OK");
+});
+
+// ------------------------------------------------------------
+// Helper: send voicemail fallback response
+// ------------------------------------------------------------
+function sendVoicemailFallback(twiml, res) {
+  twiml.say(
+    { voice: "alice", language: "en-AU" },
+    "I'm still having trouble hearing you. No worries — please leave a short voicemail after the beep and I'll pass it on to Barish."
+  );
+
+  twiml.record({
+    recordingStatusCallback: "/voicemail",
+    playBeep: true,
+    maxLength: 120 // ~2 minutes (your option D: practically unlimited for real calls)
+  });
+
+  twiml.hangup();
+
+  res.type("text/xml");
+  res.send(twiml.toString());
+}
 
 // ------------------------------------------------------------
 // MAIN GATHER LOGIC
@@ -342,7 +392,7 @@ app.post("/gather", async (req, res) => {
         action: "/gather",
         method: "POST",
         language: "en-AU",
-        speechTimeout: 1.5,
+        speechTimeout: "auto",
         timeout: 6
       });
 
@@ -367,10 +417,15 @@ app.post("/gather", async (req, res) => {
         console.log("🟩 Extracted name:", name);
 
         if (!name || name.length < 2) {
+          session.failures += 1;
+          if (session.failures >= 3) {
+            return sendVoicemailFallback(twiml, res);
+          }
           reply = "Sorry, I didn't catch your name. Could you say just your first name?";
           break;
         }
 
+        session.failures = 0; // success
         b.name = name;
         session.stage = "ask_job";
 
@@ -378,21 +433,27 @@ app.post("/gather", async (req, res) => {
         break;
       }
 
-      // JOB (recording)
+      // JOB (recording + text)
       case "ask_job":
 
+        // Start recording a short job description voicemail snippet
         twiml.record({
           recordingStatusCallback: "/saveRecording",
           playBeep: false,
           timeout: 1.5,
-          maxLength: 12
+          maxLength: 30
         });
 
         if (cleaned.trim().length < 8) {
+          session.failures += 1;
+          if (session.failures >= 3) {
+            return sendVoicemailFallback(twiml, res);
+          }
           reply = "Could you please tell me a bit more about the job?";
           break;
         }
 
+        session.failures = 0; // success
         b.job = cleaned.trim();
         session.stage = "ask_suburb";
         reply = "Thanks for the details. Which suburb are you in?";
@@ -403,10 +464,15 @@ app.post("/gather", async (req, res) => {
         const suburb = extractSuburb(cleaned);
 
         if (!suburb || suburb.length < 2) {
+          session.failures += 1;
+          if (session.failures >= 3) {
+            return sendVoicemailFallback(twiml, res);
+          }
           reply = "Sorry, I didn't catch that, what suburb are you in?";
           break;
         }
 
+        session.failures = 0; // success
         b.suburb = suburb;
         session.stage = "ask_time";
 
@@ -419,10 +485,15 @@ app.post("/gather", async (req, res) => {
         const timeValue = extractTime(cleaned);
 
         if (!timeValue) {
+          session.failures += 1;
+          if (session.failures >= 3) {
+            return sendVoicemailFallback(twiml, res);
+          }
           reply = "Sorry, when would you like us to come out?";
           break;
         }
 
+        session.failures = 0; // success
         b.time = timeValue;
         session.stage = "confirm";
 
@@ -441,6 +512,7 @@ app.post("/gather", async (req, res) => {
           userSpeech.includes("correct")
         ) {
           session.stage = "completed";
+          session.failures = 0;
 
           await saveToGoogleSheet({
             phone: b.phone,
@@ -489,9 +561,14 @@ Preferred time: ${b.time}`;
           }
 
         } else if (userSpeech.includes("no")) {
+          session.failures = 0;
           session.stage = "ask_job";
           reply = "No worries, what do you need help with?";
         } else {
+          session.failures += 1;
+          if (session.failures >= 3) {
+            return sendVoicemailFallback(twiml, res);
+          }
           reply = "Sorry, is that booking correct?";
         }
         break;
@@ -504,10 +581,14 @@ Preferred time: ${b.time}`;
         break;
 
       default:
+        session.failures += 1;
+        if (session.failures >= 3) {
+          return sendVoicemailFallback(twiml, res);
+        }
         reply = "Sorry, I didn’t catch that. Could you say it again?";
     }
 
-    // SPEAK reply
+    // SPEAK reply (for normal flow)
     session.lastReply = reply;
     twiml.say({ voice: "alice", language: "en-AU" }, reply);
 
@@ -524,7 +605,7 @@ Preferred time: ${b.time}`;
         action: "/gather",
         method: "POST",
         language: "en-AU",
-        speechTimeout: 1.5,
+        speechTimeout: "auto",   // important for job so it doesn't cut you early
         timeout: 10
       });
       gather.say({ voice: "alice", language: "en-AU" }, "");
