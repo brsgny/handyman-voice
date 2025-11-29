@@ -298,8 +298,8 @@ app.post("/voice", (req, res) => {
       action: "/gather",
       method: "POST",
       language: "en-AU",
-      speechTimeout: 2,
-      timeout: 10
+      speechTimeout: "auto",
+      timeout: 6
     });
 
     gather.say(
@@ -352,8 +352,8 @@ app.post("/gather", async (req, res) => {
         action: "/gather",
         method: "POST",
         language: "en-AU",
-        speechTimeout: 2,
-        timeout: 8
+        speechTimeout: "auto",
+        timeout: 6
       });
 
       gather.say({ voice: "alice", language: "en-AU" }, "");
@@ -390,6 +390,11 @@ app.post("/gather", async (req, res) => {
       }
 
       case "ask_job":
+        if (cleaned.trim().length < 8) {
+          reply = "Could you please tell me a bit more about the job?";
+          break;
+        }
+
         b.job = cleaned.trim();
         session.stage = "ask_suburb";
         reply = "Got it. Which suburb are you in?";
