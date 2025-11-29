@@ -1,20 +1,23 @@
 {
   "name": "handyman-voice-ai",
   "version": "1.0.0",
-  "description": "AI voice receptionist for handyman using Twilio + OpenAI.",
+  "description": "Twilio voice AI receptionist for handyman business using OpenAI.",
   "main": "index.js",
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "express": "^4.21.0",
     "body-parser": "^1.20.3",
     "twilio": "^5.3.0",
     "openai": "^4.76.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "googleapis": "^134.0.0"
   },
   "engines": {
     "node": ">=18"
   }
 }
+
