@@ -50,7 +50,7 @@ function cleanSpeech(input) {
 }
 
 // ------------------------------------------------------------
-// 🧍‍♂️ **STRONG NAME EXTRACTION (NEW)**
+// 🧍‍♂️ **FIXED STRONG NAME EXTRACTION** (new)
 // ------------------------------------------------------------
 function extractName(text) {
   if (!text) return "";
@@ -60,30 +60,25 @@ function extractName(text) {
   // Remove greetings
   t = t.replace(/\b(hi|hello|hey|good morning|good afternoon|good evening)\b/gi, "");
 
-  // Remove filler noises
-  t = t.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "");
+  // Remove intro / filler
+  t = t.replace(/\b(my name is|i am|i'm|this is|it's|its|the name is|speaking|me speaking)\b/gi, "");
+  t = t.replace(/\b(uh+|umm+|erm+|mm+|mmm+|ah+|hmm+)\b/gi, "");
 
-  // Remove repeated letters ("bbaaariiss" → "baris")
-  t = t.replace(/([a-z])\1{2,}/gi, "$1");
+  // Remove repeated garbage
+  t = t.replace(/([a-z])\1{2,}/gi, "");
 
-  // Remove introduction phrases
-  t = t.replace(
-    /\b(my name is|i am|i'm|this is|its|it's|the name is|me|speaking)\b/gi,
-    ""
-  );
+  // Remove leading symbols
+  t = t.replace(/^[^a-z]+/, "").trim();
 
-  t = t.trim();
+  // Split into words
+  let words = t.split(" ")
+    .map(w => w.replace(/[^a-z]/gi, ""))  // keep only letters
+    .filter(w => w.length >= 3);          // require ≥3 letters
 
-  // First word should be the name
-  let first = t.split(" ")[0];
+  if (words.length === 0) return "";
 
-  // Keep only letters
-  first = first.replace(/[^a-z]/gi, "");
-
-  if (!first || first.length < 2) return "";
-
-  // Capitalise
-  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+  let name = words[0];
+  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 }
 
 // ------------------------------------------------------------
@@ -284,7 +279,7 @@ function getSession(from) {
 }
 
 // ------------------------------------------------------------
-// FIRST GREETING
+// FIRST GREETING (FIXED gather timing)
 // ------------------------------------------------------------
 app.post("/voice", (req, res) => {
   try {
@@ -298,8 +293,9 @@ app.post("/voice", (req, res) => {
       action: "/gather",
       method: "POST",
       language: "en-AU",
-      speechTimeout: "auto",
-      timeout: 6
+      speechTimeout: 1.5,   // ← FIXED (no early cut)
+      timeout: 8,           // ← FIXED
+      hints: "my name is, i am, this is"
     });
 
     gather.say(
