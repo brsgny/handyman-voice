@@ -441,27 +441,33 @@ app.post("/gather", async (req, res) => {
       case "ask_job":
 
         // Start recording a short job description voicemail snippet
-        twiml.record({
-          recordingStatusCallback: "/saveRecording",
-          playBeep: false,
-          timeout: 1.5,
-          maxLength: 30
-        });
+        case "ask_job":
 
-        if (cleaned.trim().length < 8) {
-          session.failures += 1;
-          if (session.failures >= 3) {
-            return sendVoicemailFallback(twiml, res);
-          }
-          reply = "Could you please tell me a bit more about the job?";
-          break;
-        }
+  // FIXED: Improved job recording timing  
+  twiml.record({
+    recordingStatusCallback: "/saveRecording",
+    playBeep: false,
+    timeout: 5,
+    trim: "do-not-trim",
+    maxLength: 60,
+    speechTimeout: "auto"
+  });
 
-        session.failures = 0; // success
-        b.job = cleaned.trim();
-        session.stage = "ask_suburb";
-        reply = "Thanks for the details. Which suburb are you in?";
-        break;
+  if (cleaned.trim().length < 8) {
+    session.failures += 1;
+    if (session.failures >= 3) {
+      return sendVoicemailFallback(twiml, res);
+    }
+    reply = "Could you please tell me a bit more about the job?";
+    break;
+  }
+
+  session.failures = 0;
+  b.job = cleaned.trim();
+  session.stage = "ask_suburb";
+  reply = "Thanks for the details. Which suburb are you in?";
+  break;
+
 
       // SUBURB
       case "ask_suburb": {
