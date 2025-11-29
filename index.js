@@ -461,6 +461,30 @@ app.post("/gather", async (req, res) => {
     reply =
       `Perfect, ${b.name}. I'll send you a text with your booking details now. Thanks for calling.`;
 
+app.post("/saveRecording", async (req, res) => {
+  const recordingUrl = req.body.RecordingUrl || "";
+  const from = req.body.From || "";
+
+  console.log("🎤 Recording URL:", recordingUrl);
+
+  if (recordingUrl) {
+    // Save to Google Sheets
+    await saveToGoogleSheet({
+      phone: from,
+      recording: recordingUrl,
+      stage: "job_recording"
+    });
+
+    // Send SMS to handyman
+    client.messages.create({
+      from: "+61468067099",
+      to: "+61404983231",
+      body: `New job voice message:\n${recordingUrl}.mp3`
+    });
+  }
+
+  res.send("OK");
+});
 
           const customerBody =
             `Thanks for calling Barish’s Handyman Desk.
