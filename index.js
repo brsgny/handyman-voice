@@ -425,18 +425,29 @@ app.post("/gather", async (req, res) => {
         break;
       }
 
-      case "confirm": {
-        if (
-          userSpeech.includes("yes") ||
-          userSpeech.includes("yeah") ||
-          userSpeech.includes("yep") ||
-          userSpeech.includes("sure") ||
-          userSpeech.includes("correct")
-        ) {
-          session.stage = "completed";
+     case "confirm": {
+  if (
+    userSpeech.includes("yes") ||
+    userSpeech.includes("yeah") ||
+    userSpeech.includes("yep") ||
+    userSpeech.includes("sure") ||
+    userSpeech.includes("correct")
+  ) {
+    session.stage = "completed";
 
-          reply =
-            `Perfect, ${b.name}. I'll send you a text with your booking details now. Thanks for calling.`;
+    // ⭐ SAVE TO GOOGLE SHEETS ⭐
+    await saveToGoogleSheet({
+      phone: b.phone,
+      name: b.name,
+      job: b.job,
+      suburb: b.suburb,
+      time: b.time,
+      stage: "completed"
+    });
+
+    reply =
+      `Perfect, ${b.name}. I'll send you a text with your booking details now. Thanks for calling.`;
+
 
           const customerBody =
             `Thanks for calling Barish’s Handyman Desk.
