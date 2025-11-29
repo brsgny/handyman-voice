@@ -78,15 +78,33 @@ function cleanSpeech(input) {
 
 function extractName(text) {
   if (!text) return "";
-  let t = text.toLowerCase();
-  t = t.replace(/\b(hi|hello|hey|good morning|good afternoon)\b/gi, "");
-  t = t.replace(/\b(i am|i'm|my name is|this is|speaking)\b/gi, "");
-  t = t.trim();
-  let first = t.split(" ")[0];
-  first = first.replace(/[^a-z]/gi, "");
-  if (first.length < 2) return "";
-  return first.charAt(0).toUpperCase() + first.slice(1);
+
+  let t = text.toLowerCase().trim();
+
+  // REMOVE greeting / intro phrases
+  t = t.replace(/\b(hi|hello|hey|good morning|good afternoon|good evening)\b/gi, "");
+  t = t.replace(/\b(my name is|i am|i'm|this is|its|it's|the name is|me speaking|speaking)\b/gi, "");
+  t = t.replace(/\b(uh|umm|erm|mm|mmm|ah|hmm|uhh|uhhh|eh|ehh)\b/gi, "");
+
+  // REMOVE leftover garbage at start
+  t = t.replace(/^[^a-zA-Z]+/, "").trim();
+
+  // SPLIT into words
+  let words = t.split(" ").map(w => w.replace(/[^a-z]/gi, "")).filter(Boolean);
+
+  if (words.length === 0) return "";
+
+  // PICK the first realistic name
+  for (let w of words) {
+    if (w.length >= 3) {
+      // Capitalise
+      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    }
+  }
+
+  return "";
 }
+
 
 function extractSuburb(t) {
   if (!t) return "";
