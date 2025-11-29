@@ -529,3 +529,41 @@ Preferred time: ${b.time}`;
 app.listen(PORT, () =>
   console.log(`🚀 Server running on port ${PORT}`)
 );
+// ------------------------------------------------------------
+// GOOGLE SHEETS SETUP
+// ------------------------------------------------------------
+import { google } from "googleapis";
+
+const auth = new google.auth.JWT(
+  process.env.GOOGLE_SA_EMAIL,
+  null,
+  process.env.GOOGLE_SA_KEY.replace(/\\n/g, "\n"),
+  ["https://www.googleapis.com/auth/spreadsheets"]
+);
+
+const sheets = google.sheets({ version: "v4", auth });
+
+async function saveToGoogleSheet(data) {
+  try {
+    const values = [[
+      new Date().toLocaleString("en-AU", { timeZone: "Australia/Melbourne" }),
+      data.phone || "",
+      data.name || "",
+      data.job || "",
+      data.suburb || "",
+      data.time || "",
+      data.stage || ""
+    ]];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEETS_ID,
+      range: "Sheet1!A:G",
+      valueInputOption: "RAW",
+      resource: { values }
+    });
+
+    console.log("📄 Google Sheet UPDATED");
+  } catch (err) {
+    console.error("❌ Google Sheets Error:", err);
+  }
+}
