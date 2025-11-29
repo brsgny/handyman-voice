@@ -437,19 +437,42 @@ app.post("/gather", async (req, res) => {
         break;
       }
 
-     case "ask_job":
-
-  // If no usable speech came in, ask again but DO NOT move stages
-  if (!cleaned || cleaned.trim().length < 5) {
-    session.failures++;
-    
-    if (session.failures >= 3) {
-      return sendVoicemailFallback(twiml, res);
-    }
-
-    reply = "Could you tell me a little bit more about the job you need done?";
+     case "ask_job": {
+  // Not enough meaningful speech yet
+  if (!cleaned || cleaned.trim().length < 6) {
+    reply = "Could you tell me a little more about the job you need done?";
     break;
   }
+
+  // VALID JOB CAPTURED
+  b.job = cleaned.trim();
+  session.stage = "rec_job_recording";
+
+  // Return ONLY a <Record> TwiML
+  const recordTwiML = new twilio.twiml.VoiceResponse();
+  recordTwiML.say({ voice: "alice", language: "en-AU" },
+     "Thanks, recording the job details now."
+  );
+
+  recordTwiML.record({
+    recordingStatusCallback: "/saveRecording",
+    playBeep: true,
+    timeout: 4,
+    maxLength: 45,
+    trim: "do-not-trim",
+    speechTimeout: "auto"
+  });
+
+  // After recording, Twilio hits /saveRecording
+  // So we END here and DO NOT continue gather now
+  res.type("text/xml");
+  return res.send(recordTwiML.toString());
+}
+case "rec_job_recording":
+  session.stage = "ask_suburb";
+  reply = "Thanks. Which suburb are you in?";
+  break;
+
 
   // USER HAS SPOKEN SOMETHING MEANINGFUL
   session.failures = 0;
