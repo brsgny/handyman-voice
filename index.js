@@ -49,21 +49,45 @@ function extractName(text) {
 
   let t = text.toLowerCase().trim();
 
+  // Remove greetings
   t = t.replace(/\b(hi|hello|hey|good morning|good afternoon|good evening)\b/gi, "");
-  t = t.replace(/\b(my name is|i am|i'm|this is|it's|its|the name is|speaking|me speaking)\b/gi, "");
-  t = t.replace(/\b(uh+|umm+|erm+|mm+|mmm+|ah+|hmm+)\b/gi, "");
-  t = t.replace(/([a-z])\1{2,}/gi, "");
-  t = t.replace(/^[^a-z]+/, "").trim();
 
+  // Remove intro phrases
+  t = t.replace(/\b(my name is|i am|i'm|this is|it's|its|name's|name is|speaking|me speaking)\b/gi, "");
+
+  // Remove filler/noise
+  t = t.replace(/\b(uh+|umm+|erm+|mm+|mmm+|ah+|hmm+)\b/gi, "");
+
+  // Remove repeated letters
+  t = t.replace(/([a-z])\1{2,}/gi, "$1");
+
+  // Split into words
   let words = t.split(" ")
     .map(w => w.replace(/[^a-z]/gi, ""))
-    .filter(w => w.length >= 3);
+    .filter(w => w.length > 1);
 
   if (words.length === 0) return "";
 
-  let name = words[0];
+  // ❌ Words that are NOT names
+  const ignore = new Set([
+    "yes","yeah","yep","yup","ok","okay","sure","right","mate"
+  ]);
+
+  // ▶ Find the FIRST word that is *not* a filler
+  let name = "";
+  for (const w of words) {
+    if (!ignore.has(w)) {
+      name = w;
+      break;
+    }
+  }
+
+  if (!name || name.length < 2) return "";
+
+  // Capitalise
   return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 }
+
 
 // ------------------------------------------------------------
 // 🗺️ SUBURB AUTO DETECTION
