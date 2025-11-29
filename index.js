@@ -31,49 +31,32 @@ function cleanSpeech(input) {
 
   let text = input.toLowerCase();
 
-  // Remove long repeated characters
   text = text.replace(/([a-z])\1{2,}/gi, "");
-
-  // Remove hesitation/filler words
   text = text.replace(/\b(um+|uh+|erm+|hmm+|huh+|ah+|mmm+)\b/gi, "");
-
-  // Remove isolated noise syllables
   text = text.replace(/\b(m+|n+|a+)\b/gi, "");
-
-  // Remove double-letter noises inside sentences
   text = text.replace(/\b([a-z])\1{1,}\b/gi, "");
-
-  // Remove extra spaces
   text = text.replace(/\s+/g, " ").trim();
 
   return text;
 }
 
 // ------------------------------------------------------------
-// 🧍‍♂️ **FIXED STRONG NAME EXTRACTION** (new)
+// 🧍‍♂️ FIXED STRONG NAME EXTRACTION
 // ------------------------------------------------------------
 function extractName(text) {
   if (!text) return "";
 
   let t = text.toLowerCase().trim();
 
-  // Remove greetings
   t = t.replace(/\b(hi|hello|hey|good morning|good afternoon|good evening)\b/gi, "");
-
-  // Remove intro / filler
   t = t.replace(/\b(my name is|i am|i'm|this is|it's|its|the name is|speaking|me speaking)\b/gi, "");
   t = t.replace(/\b(uh+|umm+|erm+|mm+|mmm+|ah+|hmm+)\b/gi, "");
-
-  // Remove repeated garbage
   t = t.replace(/([a-z])\1{2,}/gi, "");
-
-  // Remove leading symbols
   t = t.replace(/^[^a-z]+/, "").trim();
 
-  // Split into words
   let words = t.split(" ")
-    .map(w => w.replace(/[^a-z]/gi, ""))  // keep only letters
-    .filter(w => w.length >= 3);          // require ≥3 letters
+    .map(w => w.replace(/[^a-z]/gi, ""))
+    .filter(w => w.length >= 3);
 
   if (words.length === 0) return "";
 
@@ -89,28 +72,20 @@ function extractSuburb(input) {
 
   let text = input.toLowerCase().trim();
 
-  text = text
-    .replace(
-      /\b(i'm|i am|im|in|at|from|my suburb is|suburb is|it's|its|the suburb is|i live in|live in)\b/gi,
-      ""
-    )
-    .trim();
-
-  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
-
+  text = text.replace(/\b(i'm|i am|im|in|at|from|my suburb is|suburb is|it's|its|the suburb is|i live in|live in)\b/gi, "");
+  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "");
   text = text.replace(/([a-z])\1{2,}/gi, "$1");
-
-  text = text.replace(/\b(m+|n+|a+)\b/gi, "").trim();
+  text = text.replace(/\b(m+|n+|a+)\b/gi, "");
 
   return text
     .split(" ")
-    .filter((w) => w.length > 0)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .filter(w => w.length > 0)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
 
 // ------------------------------------------------------------
-// TIME + DATE FUNCTIONS (unchanged)
+// TIME + DATE FUNCTIONS
 // ------------------------------------------------------------
 function addDays(date, days) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -142,13 +117,11 @@ function formatTimeDisplay(hour, minute, ampm) {
   return displayHour + ":" + pad(minute) + " " + ampmLower;
 }
 
-// ------------------------------------------------------------
 function extractTime(input) {
   if (!input) return "";
 
   let text = input.toLowerCase().trim();
-
-  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "").trim();
+  text = text.replace(/\b(um+|uh+|erm+|mmm+|hmm+|ah+|nn+)\b/gi, "");
 
   const now = new Date();
   let baseDate = null;
@@ -165,10 +138,7 @@ function extractTime(input) {
   else if (text.includes("tomorrow")) baseDate = addDays(now, 1);
   else if (text.includes("today")) baseDate = now;
 
-  const weekdays = [
-    "sunday","monday","tuesday","wednesday","thursday","friday","saturday"
-  ];
-
+  const weekdays = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
   const todayIndex = now.getDay();
 
   if (!baseDate) {
@@ -210,9 +180,7 @@ function extractTime(input) {
     baseDate = candidate;
   }
 
-  const timeMatch =
-    text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/) ||
-    text.match(/\b(\d{3,4})\b/);
+  const timeMatch = text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/) || text.match(/\b(\d{3,4})\b/);
 
   if (timeMatch) {
     let hour = parseInt(timeMatch[1], 10);
@@ -259,7 +227,7 @@ app.get("/", (req, res) => {
 });
 
 // ------------------------------------------------------------
-// GET OR CREATE SESSION OBJECT
+// SESSION HANDLING
 // ------------------------------------------------------------
 function getSession(from) {
   if (!sessions[from]) {
@@ -279,7 +247,7 @@ function getSession(from) {
 }
 
 // ------------------------------------------------------------
-// FIRST GREETING (FIXED gather timing)
+// FIRST GREETING (fixed gather)
 // ------------------------------------------------------------
 app.post("/voice", (req, res) => {
   try {
@@ -293,8 +261,8 @@ app.post("/voice", (req, res) => {
       action: "/gather",
       method: "POST",
       language: "en-AU",
-      speechTimeout: 1.5,   // ← FIXED (no early cut)
-      timeout: 8,           // ← FIXED
+      speechTimeout: 1.5,
+      timeout: 8,
       hints: "my name is, i am, this is"
     });
 
@@ -312,7 +280,7 @@ app.post("/voice", (req, res) => {
 });
 
 // ------------------------------------------------------------
-// MAIN LOOP – booking, repeat, cleaning, SMS
+// 🔥 GLOBAL VOICE RECORDING ENDPOINT (Option A)
 // ------------------------------------------------------------
 app.post("/saveRecording", async (req, res) => {
   const recordingUrl = req.body.RecordingUrl || "";
@@ -337,6 +305,19 @@ app.post("/saveRecording", async (req, res) => {
   res.send("OK");
 });
 
+// ------------------------------------------------------------
+// MAIN GATHER LOGIC
+// ------------------------------------------------------------
+app.post("/gather", async (req, res) => {
+  try {
+    const from = req.body.From || "unknown";
+    const session = getSession(from);
+
+    const userSpeechRaw = req.body.SpeechResult || "";
+    const cleaned = cleanSpeech(userSpeechRaw);
+    const userSpeech = cleaned.toLowerCase();
+
+    const twiml = new twilio.twiml.VoiceResponse();
 
     // --------------------------------------------------------
     // REPEAT HANDLING
@@ -361,7 +342,7 @@ app.post("/saveRecording", async (req, res) => {
         action: "/gather",
         method: "POST",
         language: "en-AU",
-        speechTimeout: "auto",
+        speechTimeout: 1.5,
         timeout: 6
       });
 
@@ -378,9 +359,8 @@ app.post("/saveRecording", async (req, res) => {
     const b = session.booking;
 
     switch (session.stage) {
-      // -------------------------
-      // FIXED NAME HANDLING
-      // -------------------------
+
+      // NAME
       case "ask_name": {
         const name = extractName(cleaned);
 
@@ -398,32 +378,32 @@ app.post("/saveRecording", async (req, res) => {
         break;
       }
 
-     case "ask_job":
-      // Start recording
-      twiml.record({
-        recordingStatusCallback: "/saveRecording",
-        playBeep: false,
-        timeout: 1.5,
-        maxLength: 12
-      });
+      // JOB (recording)
+      case "ask_job":
 
+        twiml.record({
+          recordingStatusCallback: "/saveRecording",
+          playBeep: false,
+          timeout: 1.5,
+          maxLength: 12
+        });
 
-      if (cleaned.trim().length < 8) {
-        reply = "Could you please tell me a bit more about the job?";
+        if (cleaned.trim().length < 8) {
+          reply = "Could you please tell me a bit more about the job?";
+          break;
+        }
+
+        b.job = cleaned.trim();
+        session.stage = "ask_suburb";
+        reply = "Thanks for the details. Which suburb are you in?";
         break;
-      }
 
-      b.job = cleaned.trim();
-      session.stage = "ask_suburb";
-      reply = "thanks for details you have given me now. Which suburb are you in?";
-      break;
-
-
+      // SUBURB
       case "ask_suburb": {
         const suburb = extractSuburb(cleaned);
 
         if (!suburb || suburb.length < 2) {
-          reply = "Sorry I didnt catch that, what suburb are you in?";
+          reply = "Sorry, I didn't catch that, what suburb are you in?";
           break;
         }
 
@@ -434,11 +414,12 @@ app.post("/saveRecording", async (req, res) => {
         break;
       }
 
+      // TIME
       case "ask_time": {
         const timeValue = extractTime(cleaned);
 
         if (!timeValue) {
-          reply = "Sorry I didnt catch that, when would you like us to come out?";
+          reply = "Sorry, when would you like us to come out?";
           break;
         }
 
@@ -446,55 +427,32 @@ app.post("/saveRecording", async (req, res) => {
         session.stage = "confirm";
 
         reply = "Thanks. Can I confirm the booking — is everything you said correct?";
-
         break;
       }
 
-     case "confirm": {
-  if (
-    userSpeech.includes("yes") ||
-    userSpeech.includes("yeah") ||
-    userSpeech.includes("yep") ||
-    userSpeech.includes("sure") ||
-    userSpeech.includes("correct")
-  ) {
-    session.stage = "completed";
+      // CONFIRM
+      case "confirm": {
 
-    // ⭐ SAVE TO GOOGLE SHEETS ⭐
-    await saveToGoogleSheet({
-      phone: b.phone,
-      name: b.name,
-      job: b.job,
-      suburb: b.suburb,
-      time: b.time,
-      stage: "completed"
-    });
+        if (
+          userSpeech.includes("yes") ||
+          userSpeech.includes("yeah") ||
+          userSpeech.includes("yep") ||
+          userSpeech.includes("sure") ||
+          userSpeech.includes("correct")
+        ) {
+          session.stage = "completed";
 
-    reply =
-      `Perfect, ${b.name}. I'll send you a text with your booking details now. Thanks for calling.`;
+          await saveToGoogleSheet({
+            phone: b.phone,
+            name: b.name,
+            job: b.job,
+            suburb: b.suburb,
+            time: b.time,
+            stage: "completed"
+          });
 
-app.post("/saveRecording", async (req, res) => {
-  const recordingUrl = req.body.RecordingUrl || "";
-  const from = req.body.From || "";
-
-  console.log("🎤 Recording URL:", recordingUrl);
-
-  if (recordingUrl) {
-    await saveToGoogleSheet({
-      phone: from,
-      recording: recordingUrl + ".mp3",
-      stage: "job_recording"
-    });
-
-    client.messages.create({
-      from: process.env.TWILIO_NUMBER,
-      to: "+61404983231",
-      body: `New job voice message:\n${recordingUrl}.mp3`
-    });
-  }
-
-  res.send("OK");
-});
+          reply =
+            `Perfect, ${b.name}. I'll send you a text with your booking details now. Thanks for calling.`;
 
           const customerBody =
             `Thanks for calling Barish’s Handyman Desk.
@@ -513,7 +471,6 @@ Suburb: ${b.suburb}
 Preferred time: ${b.time}`;
 
           try {
-            // SMS to customer
             if (from !== "unknown") {
               client.messages.create({
                 from: "+61468067099",
@@ -522,7 +479,6 @@ Preferred time: ${b.time}`;
               });
             }
 
-            // SMS to owner
             client.messages.create({
               from: "+61468067099",
               to: "+61404983231",
@@ -531,6 +487,7 @@ Preferred time: ${b.time}`;
           } catch (err) {
             console.error("❌ SMS error:", err.message);
           }
+
         } else if (userSpeech.includes("no")) {
           session.stage = "ask_job";
           reply = "No worries, what do you need help with?";
@@ -540,9 +497,10 @@ Preferred time: ${b.time}`;
         break;
       }
 
+      // DONE
       case "completed":
         reply =
-          "Thanks again for calling Barish’s handyman line. Is there anything else you need today?";
+          "Thanks again for calling Barish’s handyman line. Have a great day!";
         break;
 
       default:
@@ -553,11 +511,11 @@ Preferred time: ${b.time}`;
     session.lastReply = reply;
     twiml.say({ voice: "alice", language: "en-AU" }, reply);
 
-    // END or CONTINUE
+    // END OR CONTINUE
     if (session.stage === "completed") {
       twiml.say(
         { voice: "alice", language: "en-AU" },
-        "Have a lovely day. Bye for now."
+        "Bye for now!"
       );
       twiml.hangup();
     } else {
@@ -566,7 +524,7 @@ Preferred time: ${b.time}`;
         action: "/gather",
         method: "POST",
         language: "en-AU",
-        speechTimeout: 2,
+        speechTimeout: 1.5,
         timeout: 10
       });
       gather.say({ voice: "alice", language: "en-AU" }, "");
@@ -574,6 +532,7 @@ Preferred time: ${b.time}`;
 
     res.type("text/xml");
     res.send(twiml.toString());
+
   } catch (err) {
     console.error("❌ Error in /gather:", err);
     res.type("text/xml");
@@ -587,6 +546,7 @@ Preferred time: ${b.time}`;
 app.listen(PORT, () =>
   console.log(`🚀 Server running on port ${PORT}`)
 );
+
 // ------------------------------------------------------------
 // GOOGLE SHEETS SETUP
 // ------------------------------------------------------------
@@ -603,21 +563,20 @@ const sheets = google.sheets({ version: "v4", auth });
 
 async function saveToGoogleSheet(data) {
   try {
-   const values = [[
-    new Date().toLocaleString("en-AU"),
-    data.phone || "",
-    data.name || "",
-    data.job || "",
-    data.suburb || "",
-    data.time || "",
-    data.recording || "",
-    data.stage || ""
-]];
-
+    const values = [[
+      new Date().toLocaleString("en-AU"),
+      data.phone || "",
+      data.name || "",
+      data.job || "",
+      data.suburb || "",
+      data.time || "",
+      data.recording || "",
+      data.stage || ""
+    ]];
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEETS_ID,
-      range: "Sheet1!A:G",
+      range: "Sheet1!A:H",
       valueInputOption: "RAW",
       resource: { values }
     });
