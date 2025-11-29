@@ -475,7 +475,7 @@ app.post("/gather", async (req, res) => {
   // Return ONLY a <Record> TwiML
   const recordTwiML = new twilio.twiml.VoiceResponse();
   recordTwiML.say({ voice: "alice", language: "en-AU" },
-     "Thanks, recording the job details now."
+     "Thanks, Could you tell me a little more about the job you need done? We will be recording the job details from you now."
   );
 
   recordTwiML.record({
