@@ -437,33 +437,37 @@ app.post("/gather", async (req, res) => {
         break;
       }
 
-      // JOB (recording + text)
-      case "ask_job":
+     case "ask_job":
 
-        // Start recording a short job description voicemail snippet
-        case "ask_job":
-
-  // FIXED: Improved job recording timing  
-  twiml.record({
-    recordingStatusCallback: "/saveRecording",
-    playBeep: false,
-    timeout: 5,
-    trim: "do-not-trim",
-    maxLength: 60,
-    speechTimeout: "auto"
-  });
-
-  if (cleaned.trim().length < 8) {
-    session.failures += 1;
+  // If no usable speech came in, ask again but DO NOT move stages
+  if (!cleaned || cleaned.trim().length < 5) {
+    session.failures++;
+    
     if (session.failures >= 3) {
       return sendVoicemailFallback(twiml, res);
     }
-    reply = "Could you please tell me a bit more about the job?";
+
+    reply = "Could you tell me a little bit more about the job you need done?";
     break;
   }
 
+  // USER HAS SPOKEN SOMETHING MEANINGFUL
   session.failures = 0;
+
+  // Save their job description first
   b.job = cleaned.trim();
+
+  // NOW begin recording — AFTER we already got proper speech
+  twiml.record({
+    recordingStatusCallback: "/saveRecording",
+    playBeep: false,
+    timeout: 8,
+    maxLength: 90,
+    trim: "do-not-trim",
+    speechTimeout: "auto"
+  });
+
+  // Move to next stage
   session.stage = "ask_suburb";
   reply = "Thanks for the details. Which suburb are you in?";
   break;
